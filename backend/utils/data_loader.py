@@ -48,7 +48,7 @@ class EEGDataLoader:
                 "num_channels": len(self.channels),
                 "channels": self.channels,
                 "sampling_rate_hz": round(self.fs, 2),
-                "time_duration_sec": round(len(self.df) / self.fs, 2),
+                "time_duration_sec": round((len(self.df) - 1) / self.fs,2) if len(self.df) > 1 else 0.0,
                 "has_subject_id": self.subject_col is not None,
                 "has_events": self.event_col is not None,
                 "subject_ids": self.df[self.subject_col].unique().tolist() if self.subject_col else [],
@@ -80,9 +80,16 @@ class EEGDataLoader:
                 break
 
         # Identify Subject column
-        subject_keywords = ['subject', 'id', 'participant', 'person']
+        subject_keywords = {
+            "subject",
+            "subject_id",
+            "participant",
+            "participant_id",
+            "person",
+            "person_id"
+        }
         for col in columns:
-            if col not in metadata_cols and any(key in col.lower() for key in subject_keywords):
+            if (col not in metadata_cols and col.lower().strip() in subject_keywords):
                 self.subject_col = col
                 metadata_cols.append(col)
                 break
@@ -94,13 +101,28 @@ class EEGDataLoader:
                 self.event_col = col
                 metadata_cols.append(col)
                 break
+            
 
         # Treat all remaining numeric columns as EEG channels
+        numeric_metadata_keywords = [
+            'age',
+            'trial',
+            'trial_id',
+            'session',
+            'session_id',
+            'recording_id',
+            'sample_id',
+            'sampling_rate',
+            'fs'
+        ]
         self.channels = []
         for col in columns:
+            normalized_col = col.lower().strip()
+
             if col not in metadata_cols:
-                # Ensure the column is numeric before classifying as channel
-                if pd.api.types.is_numeric_dtype(self.df[col]):
+                if normalized_col in numeric_metadata_keywords:
+                    metadata_cols.append(col)
+                elif pd.api.types.is_numeric_dtype(self.df[col]):
                     self.channels.append(col)
                 else:
                     metadata_cols.append(col)
@@ -124,11 +146,40 @@ class EEGDataLoader:
         if total_nans > 0:
             print(f"Warning: Detected {total_nans} missing values in EEG channels. Performing interpolation...")
             # Interpolate channel columns linearly
-            self.df[self.channels] = self.df[self.channels].interpolate(method='linear', limit_direction='both')
+            if self.subject_col:
+                self.df[self.channels] = (
+                    self.df.groupby(self.subject_col)[self.channels]
+                    .transform(
+                        lambda group: group.interpolate(
+                            method='linear',
+                            limit=5,
+                            limit_direction='both'
+                        )
+                    )
+                )
+            else:
+                self.df[self.channels] = (
+                    self.df[self.channels]
+                    .interpolate(
+                        method='linear',
+                        limit=5,
+                        limit_direction='both'
+                    )
+                )
             
             # If any NaNs remain (e.g. at the edges), fill with forward/backward fill
             if self.df[self.channels].isna().sum().sum() > 0:
-                self.df[self.channels] = self.df[self.channels].fillna(method='ffill').fillna(method='bfill')
+                if self.subject_col:
+                    self.df[self.channels] = (
+                        self.df.groupby(self.subject_col)[self.channels]
+                        .transform(lambda group: group.ffill().bfill())
+                    )
+                else:
+                    self.df[self.channels] = (
+                        self.df[self.channels]
+                        .ffill()
+                        .bfill()
+                    )
 
     def _estimate_sampling_rate(self):
         """
@@ -142,20 +193,27 @@ class EEGDataLoader:
             try:
                 # Calculate diffs
                 time_diffs = np.diff(self.df[self.time_col].values)
-                mean_dt = np.mean(time_diffs)
+                valid_diffs = time_diffs[
+                    np.isfinite(time_diffs) & (time_diffs > 0)
+                ]
 
-                if mean_dt > 0:
+                if len(valid_diffs) == 0:
+                    self.fs = 250.0
+                    return
+
+                median_dt = np.median(valid_diffs)
+
+                if median_dt > 0:
                     # If time is in milliseconds (common in EEG), convert to seconds
                     # We assume ms if the mean difference is large (e.g. > 0.05 for 250Hz is 4ms)
                     # Standard EEG fs is usually 100Hz - 1000Hz, so dt is 1ms - 10ms.
                     # If mean dt is > 0.5, we assume ms if timestamps are integers or large.
                     # Let's check magnitude of the first timestamp
-                    first_time = self.df[self.time_col].iloc[0]
                     
-                    if mean_dt >= 1.0:  # Time is likely in milliseconds (e.g., 4ms, 10ms diffs)
-                        self.fs = 1000.0 / mean_dt
+                    if median_dt >= 1.0:  # Time is likely in milliseconds (e.g., 4ms, 10ms diffs)
+                        self.fs = 1000.0 / median_dt
                     else:  # Time is likely in seconds (e.g., 0.004s, 0.01s diffs)
-                        self.fs = 1.0 / mean_dt
+                        self.fs = 1.0 / median_dt
                 
                 # Check for extreme outlier sampling rates
                 if self.fs <= 0 or self.fs > 10000:
