@@ -73,3 +73,26 @@ def test_data_loader_basic_validation(tmp_path):
     # Subject and event columns should be identified.
     assert info["has_subject_id"] is True
     assert info["has_events"] is True
+
+
+def test_data_loader_with_synthetic_dataset():
+    """
+    Tests EEGDataLoader with the actual generated sample_eeg.csv file.
+    Verifies that all 96 missing values are successfully cleaned and fs is correct.
+    """
+    import os
+    csv_path = "data/sample_eeg.csv"
+    assert os.path.exists(csv_path), "sample_eeg.csv must be generated first"
+
+    loader = EEGDataLoader(csv_path)
+    dataframe, info = loader.load_and_validate()
+
+    assert info["num_samples"] == 15000
+    assert info["num_channels"] == 8
+    assert info["sampling_rate_hz"] == pytest.approx(250.0)
+    assert info["time_duration_sec"] == pytest.approx(60.0)
+    assert info["has_subject_id"] is True
+    assert info["has_events"] is True
+    
+    # Ensure there are absolutely no NaNs remaining after interpolation
+    assert dataframe[info["channels"]].isna().sum().sum() == 0
