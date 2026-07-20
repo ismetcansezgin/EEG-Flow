@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="EEGFlow — EEG Signal Processing & Machine Learning Analytics Dashboard">
+    <title>EEGFlow — Signal Analytics Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+    <div class="bg-orb orb-3"></div>
+
+    <div class="app-container">
+
+        <!-- ─── SIDEBAR ─── -->
+        <aside class="sidebar" id="sidebar">
+            <div class="brand">
+                <div class="logo-ring">
+                    <span class="logo-emoji">🧠</span>
+                </div>
+                <div class="brand-text">
+                    <h2>EEGFlow</h2>
+                    <span class="brand-tagline">Signal Pipeline v1.0</span>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <nav class="nav-menu" aria-label="Main navigation">
+                <p class="nav-section-label">PIPELINE</p>
+                <a href="#" class="nav-item active" id="nav-loader" data-page="page-loader">
+                    <span class="nav-icon">📁</span>
+                    <span class="nav-label">Data Loader</span>
+                    <span class="nav-badge active-badge" id="badge-loader">Active</span>
+                </a>
+                <a href="#" class="nav-item locked" id="nav-preprocess">
+                    <span class="nav-icon">⚡</span>
+                    <span class="nav-label">Preprocessing</span>
+                    <span class="nav-badge phase-badge">Phase 1</span>
+                </a>
+                <a href="#" class="nav-item locked" id="nav-features">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-label">Feature Engine</span>
+                    <span class="nav-badge phase-badge">Phase 2</span>
+                </a>
+                <a href="#" class="nav-item locked" id="nav-models">
+                    <span class="nav-icon">🤖</span>
+                    <span class="nav-label">ML Models</span>
+                    <span class="nav-badge phase-badge">Phase 3</span>
+                </a>
+
+                <p class="nav-section-label" style="margin-top:16px;">DOCS</p>
+                <a href="#" class="nav-item" id="nav-guidelines" data-page="page-guidelines">
+                    <span class="nav-icon">📖</span>
+                    <span class="nav-label">Dataset Guidelines</span>
+                </a>
+            </nav>
+
+            <div class="divider"></div>
+
+            <div class="api-status-card" id="apiStatusCard">
+                <div class="status-indicator">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span class="status-label" id="statusLabel">Checking API…</span>
+                </div>
+                <span class="status-sub">http://127.0.0.1:8000</span>
+            </div>
+        </aside>
+
+        <!-- ─── MAIN CONTENT ─── -->
+        <main class="main-content">
+
+            <!-- ══════════════════════════════
+                 PAGE: DATA LOADER
+                 ══════════════════════════════ -->
+            <div id="page-loader" class="page-view">
+                <header class="page-header">
+                    <div class="breadcrumb">
+                        <span>EEGFlow</span><span class="crumb-sep">›</span>
+                        <span class="crumb-active">Data Loader</span>
+                    </div>
+                    <h1 id="pageTitle">EEG Data Ingestion & Validation</h1>
+                    <p class="page-subtitle">
+                        Upload a multi-channel EEG CSV file. The pipeline will automatically classify electrodes,
+                        detect the sampling frequency, interpolate missing values and return a full validation report.
+                    </p>
+                </header>
+
+                <section class="upload-section" aria-label="File upload">
+                    <div class="drop-zone" id="dropZone" role="button" tabindex="0"
+                         aria-label="Drag and drop CSV file or click to browse">
+                        <div class="drop-zone-inner">
+                            <div class="upload-anim" id="uploadAnim">
+                                <div class="upload-ring ring-outer"></div>
+                                <div class="upload-ring ring-inner"></div>
+                                <span class="upload-center-icon">📡</span>
+                            </div>
+                            <h3>Drag & Drop your EEG CSV here</h3>
+                            <p>Supports multi-subject, multi-channel datasets with timestamps and event labels</p>
+                            <label class="browse-btn" for="fileInput">
+                                <span>Browse Files</span>
+                            </label>
+                            <input type="file" id="fileInput" accept=".csv" aria-label="Select CSV file">
+                            <p class="drop-hint">Accepted format: <code>.csv</code> &nbsp;·&nbsp;
+                                <a href="#" class="inline-link" id="goToGuidelinesLink">How to format my dataset? →</a>
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="progress-bar-wrap hidden" id="progressWrap">
+                        <div class="progress-bar-track">
+                            <div class="progress-bar-fill" id="progressFill"></div>
+                        </div>
+                        <span class="progress-label" id="progressLabel">Uploading…</span>
+                    </div>
+                </section>
+
+                <section class="results-section hidden" id="resultsSection" aria-live="polite">
+                    <div class="success-banner" id="successBanner">
+                        <span class="success-icon">✅</span>
+                        <div>
+                            <strong id="bannerFilename">file.csv</strong> uploaded and validated successfully.
+                            All missing values resolved via subject-grouped interpolation.
+                        </div>
+                    </div>
+
+                    <div class="kpi-grid">
+                        <div class="kpi-card">
+                            <div class="kpi-top"><span class="kpi-icon">🔢</span><span class="kpi-label">Total Samples</span></div>
+                            <h3 class="kpi-value" id="numSamples">—</h3>
+                            <div class="kpi-glow"></div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-top"><span class="kpi-icon">📡</span><span class="kpi-label">EEG Channels</span></div>
+                            <h3 class="kpi-value" id="numChannels">—</h3>
+                            <div class="kpi-glow"></div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-top"><span class="kpi-icon">📈</span><span class="kpi-label">Sampling Rate (fₛ)</span></div>
+                            <h3 class="kpi-value" id="samplingRate">—</h3>
+                            <div class="kpi-glow"></div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-top"><span class="kpi-icon">⏱️</span><span class="kpi-label">Duration</span></div>
+                            <h3 class="kpi-value" id="durationSec">—</h3>
+                            <div class="kpi-glow"></div>
+                        </div>
+                    </div>
+
+                    <div class="detail-row">
+                        <div class="detail-card">
+                            <div class="detail-card-header">
+                                <span class="detail-icon">🧠</span><h4>Active EEG Electrodes</h4>
+                            </div>
+                            <div class="pills-container" id="channelPills"></div>
+                        </div>
+                        <div class="detail-card">
+                            <div class="detail-card-header">
+                                <span class="detail-icon">👥</span><h4>Participants & States</h4>
+                            </div>
+                            <div class="info-table">
+                                <div class="info-row"><span class="info-key">Subject IDs</span><span class="info-val" id="subjectList">—</span></div>
+                                <div class="info-row"><span class="info-key">Event Types</span><span class="info-val" id="eventList">—</span></div>
+                                <div class="info-row"><span class="info-key">Subject Tracking</span><span class="info-val" id="hasSubject">—</span></div>
+                                <div class="info-row"><span class="info-key">Event Labels</span><span class="info-val" id="hasEvents">—</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="upload-again-wrap">
+                        <button class="upload-again-btn" id="uploadAgainBtn">↩ Upload Another File</button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ══════════════════════════════
+                 PAGE: DATASET GUIDELINES
+                 ══════════════════════════════ -->
+            <div id="page-guidelines" class="page-view hidden">
+                <header class="page-header">
+                    <div class="breadcrumb">
+                        <span>EEGFlow</span><span class="crumb-sep">›</span>
+                        <span class="crumb-active">Dataset Guidelines</span>
+                    </div>
+                    <h1>Dataset Formatting Guidelines</h1>
+                    <p class="page-subtitle">
+                        EEGFlow accepts CSV files that follow a specific column structure. This page explains
+                        how to convert any EEG dataset into a compatible format.
+                    </p>
+                </header>
+
+                <!-- Quick Summary Cards -->
+                <div class="guide-summary-grid">
+                    <div class="guide-summary-card">
+                        <span class="guide-summary-icon">📄</span>
+                        <div>
+                            <strong>File Format</strong>
+                            <p>Plain <code>.csv</code> with comma-separated values and a header row</p>
+                        </div>
+                    </div>
+                    <div class="guide-summary-card">
+                        <span class="guide-summary-icon">🏷️</span>
+                        <div>
+                            <strong>Column Naming</strong>
+                            <p>Use standard keywords for time, subject, event and electrode names</p>
+                        </div>
+                    </div>
+                    <div class="guide-summary-card">
+                        <span class="guide-summary-icon">🔢</span>
+                        <div>
+                            <strong>Data Type</strong>
+                            <p>All EEG channel values must be numeric (float/int). String columns are excluded automatically</p>
+                        </div>
+                    </div>
+                    <div class="guide-summary-card">
+                        <span class="guide-summary-icon">✅</span>
+                        <div>
+                            <strong>Missing Values</strong>
+                            <p>NaNs are allowed — EEGFlow will interpolate them automatically per subject</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section: Required Structure -->
+                <div class="guide-section">
+                    <div class="guide-section-header">
+                        <span class="guide-section-num">01</span>
+                        <div>
+                            <h2>Required CSV Structure</h2>
+                            <p>Your CSV file must include at least one numeric EEG channel column. All other columns are optional but recommended.</p>
+                        </div>
+                    </div>
+
+                    <div class="col-table-wrap">
+                        <table class="col-table">
+                            <thead>
+                                <tr>
+                                    <th>Column Role</th>
+                                    <th>Accepted Column Names (examples)</th>
+                                    <th>Required?</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><span class="col-tag time-tag">Time</span></td>
+                                    <td><code>time</code>, <code>timestamp</code>, <code>time_ms</code>, <code>time_sec</code></td>
+                                    <td><span class="req-badge recommended">Recommended</span></td>
+                                    <td>Timestamps per sample. Used to auto-detect sampling rate (fₛ). Can be in milliseconds or seconds.</td>
+                                </tr>
+                                <tr>
+                                    <td><span class="col-tag subject-tag">Subject</span></td>
+                                    <td><code>subject_id</code>, <code>subject</code>, <code>participant</code>, <code>participant_id</code></td>
+                                    <td><span class="req-badge optional">Optional</span></td>
+                                    <td>Participant identifier. When present, NaN interpolation is performed per-subject to prevent data leakage.</td>
+                                </tr>
+                                <tr>
+                                    <td><span class="col-tag event-tag">Event / Label</span></td>
+                                    <td><code>event</code>, <code>label</code>, <code>state</code>, <code>marker</code>, <code>class</code></td>
+                                    <td><span class="req-badge optional">Optional</span></td>
+                                    <td>Cognitive state or trial marker (e.g. <em>Relaxed</em>, <em>Task</em>). Used for epoch-level classification in later phases.</td>
+                                </tr>
+                                <tr class="highlight-row">
+                                    <td><span class="col-tag eeg-tag">EEG Channels</span></td>
+                                    <td><code>Fp1</code>, <code>Fp2</code>, <code>F3</code>, <code>C3</code>, <code>O1</code> … any electrode name</td>
+                                    <td><span class="req-badge required">Required</span></td>
+                                    <td>All remaining numeric columns are treated as EEG electrode signals. Must contain float values in µV.</td>
+                                </tr>
+                                <tr>
+                                    <td><span class="col-tag meta-tag">Excluded Metadata</span></td>
+                                    <td><code>age</code>, <code>trial</code>, <code>trial_id</code>, <code>session</code>, <code>session_id</code>, <code>fs</code></td>
+                                    <td><span class="req-badge optional">Auto-excluded</span></td>
+                                    <td>These numeric metadata columns are automatically detected and excluded from EEG channel classification.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Section: Example CSV -->
+                <div class="guide-section">
+                    <div class="guide-section-header">
+                        <span class="guide-section-num">02</span>
+                        <div>
+                            <h2>Minimal Valid CSV Example</h2>
+                            <p>Copy this template and replace the values with your own data.</p>
+                        </div>
+                    </div>
+                    <div class="code-block-wrap">
+                        <div class="code-block-header">
+                            <span>📄 sample_eeg.csv</span>
+                            <button class="copy-btn" id="copyCSV">Copy</button>
+                        </div>
+                        <pre class="code-block" id="csvExample">time_ms,subject_id,event,Fp1,Fp2,F3,F4,C3,C4,O1,O2
+0,1,Relaxed,12.4,11.8,9.2,8.7,7.1,7.5,15.3,14.9
+4,1,Relaxed,12.1,11.5,9.0,8.5,7.3,7.2,15.1,14.7
+8,1,Relaxed,12.6,11.9,9.4,8.8,7.0,7.6,15.5,15.0
+0,2,Task,6.1,5.9,7.8,8.0,6.5,6.7,5.2,5.0
+4,2,Task,6.3,6.0,7.9,8.1,6.4,6.8,5.1,4.9</pre>
+                    </div>
+                </div>
+
+                <!-- Section: Converting from other formats -->
+                <div class="guide-section">
+                    <div class="guide-section-header">
+                        <span class="guide-section-num">03</span>
+                        <div>
+                            <h2>Converting from Common EEG Formats</h2>
+                            <p>Use the Python snippets below to convert your existing dataset into the EEGFlow-compatible CSV format.</p>
+                        </div>
+                    </div>
+
+                    <div class="converter-tabs">
+                        <button class="tab-btn active" data-tab="tab-edf">EDF / BDF</button>
+                        <button class="tab-btn" data-tab="tab-mat">MATLAB (.mat)</button>
+                        <button class="tab-btn" data-tab="tab-openbci">OpenBCI</button>
+                        <button class="tab-btn" data-tab="tab-pandas">Generic CSV</button>
+                    </div>
+
+                    <!-- EDF/BDF -->
+                    <div class="tab-content active" id="tab-edf">
+                        <div class="code-block-wrap">
+                            <div class="code-block-header">
+                                <span>🐍 convert_edf.py — Requires: <code>mne</code></span>
+                                <button class="copy-btn" data-target="code-edf">Copy</button>
+                            </div>
+                            <pre class="code-block" id="code-edf">import mne
+import pandas as pd
+
+# Load the EDF/BDF file
+raw = mne.io.read_raw_edf("your_file.edf", preload=True)
+
+# Extract signal data as a DataFrame
+data, times = raw[:]
+channel_names = raw.ch_names
+
+df = pd.DataFrame(data.T * 1e6, columns=channel_names)  # Convert V → µV
+df.insert(0, "time_ms", times * 1000)                   # Seconds → milliseconds
+
+# Optional: add subject_id and event columns if you have annotation data
+df.insert(1, "subject_id", 1)
+df.insert(2, "event", "Relaxed")
+
+df.to_csv("output_eegflow.csv", index=False)
+print("Saved:", df.shape)</pre>
+                        </div>
+                    </div>
+
+                    <!-- MATLAB -->
+                    <div class="tab-content hidden" id="tab-mat">
+                        <div class="code-block-wrap">
+                            <div class="code-block-header">
+                                <span>🐍 convert_mat.py — Requires: <code>scipy</code></span>
+                                <button class="copy-btn" data-target="code-mat">Copy</button>
+                            </div>
+                            <pre class="code-block" id="code-mat">import scipy.io
+import pandas as pd
+import numpy as np
+
+# Load .mat file
+mat = scipy.io.loadmat("your_file.mat")
+
+# Replace 'eeg_data' and 'fs' with your actual variable names
+eeg_data = mat["eeg_data"]   # Shape: (n_channels, n_samples)
+fs       = int(mat["fs"])    # Sampling rate in Hz
+
+channel_names = ["Fp1","Fp2","F3","F4","C3","C4","O1","O2"]  # Adjust to your channels
+
+n_samples = eeg_data.shape[1]
+time_ms   = np.arange(n_samples) / fs * 1000
+
+df = pd.DataFrame(eeg_data.T, columns=channel_names)
+df.insert(0, "time_ms",    time_ms)
+df.insert(1, "subject_id", 1)
+df.insert(2, "event",      "Relaxed")
+
+df.to_csv("output_eegflow.csv", index=False)
+print("Saved:", df.shape)</pre>
+                        </div>
+                    </div>
+
+                    <!-- OpenBCI -->
+                    <div class="tab-content hidden" id="tab-openbci">
+                        <div class="code-block-wrap">
+                            <div class="code-block-header">
+                                <span>🐍 convert_openbci.py — Standard OpenBCI CSV</span>
+                                <button class="copy-btn" data-target="code-openbci">Copy</button>
+                            </div>
+                            <pre class="code-block" id="code-openbci">import pandas as pd
+
+# OpenBCI CSVs typically start with comment lines beginning with '%'
+df_raw = pd.read_csv("your_openbci_file.csv", comment="%")
+df_raw.columns = df_raw.columns.str.strip()  # Remove leading/trailing spaces
+
+# OpenBCI channel columns are usually named 'EXG Channel 0', 'EXG Channel 1' etc.
+eeg_cols = [c for c in df_raw.columns if "EXG" in c or "Channel" in c]
+
+# Rename to standard electrode names
+rename_map = {old: new for old, new in zip(eeg_cols, ["Fp1","Fp2","F3","F4","C3","C4","O1","O2"])}
+df_raw.rename(columns=rename_map, inplace=True)
+
+# Use sample index to compute time_ms (OpenBCI default: 250 Hz)
+fs = 250
+df_raw.insert(0, "time_ms", (df_raw.index / fs) * 1000)
+df_raw.insert(1, "subject_id", 1)
+df_raw.insert(2, "event", "Relaxed")
+
+df_out = df_raw[["time_ms", "subject_id", "event"] + list(rename_map.values())]
+df_out.to_csv("output_eegflow.csv", index=False)
+print("Saved:", df_out.shape)</pre>
+                        </div>
+                    </div>
+
+                    <!-- Generic CSV -->
+                    <div class="tab-content hidden" id="tab-pandas">
+                        <div class="code-block-wrap">
+                            <div class="code-block-header">
+                                <span>🐍 convert_generic.py — For any existing CSV</span>
+                                <button class="copy-btn" data-target="code-pandas">Copy</button>
+                            </div>
+                            <pre class="code-block" id="code-pandas">import pandas as pd
+
+df = pd.read_csv("your_existing_file.csv")
+print("Current columns:", df.columns.tolist())
+
+# ── Step 1: Rename your time column to one EEGFlow recognises ──
+df.rename(columns={"YOUR_TIME_COL": "time_ms"}, inplace=True)
+
+# ── Step 2: Rename subject and event columns (optional) ──
+df.rename(columns={
+    "YOUR_SUBJECT_COL": "subject_id",
+    "YOUR_EVENT_COL":   "event",
+}, inplace=True)
+
+# ── Step 3: Rename electrode columns to standard 10-20 names ──
+df.rename(columns={
+    "ch1": "Fp1", "ch2": "Fp2",
+    "ch3": "F3",  "ch4": "F4",
+    "ch5": "C3",  "ch6": "C4",
+    "ch7": "O1",  "ch8": "O2",
+}, inplace=True)
+
+# ── Step 4: Drop any columns you don't need ──
+keep = ["time_ms", "subject_id", "event", "Fp1","Fp2","F3","F4","C3","C4","O1","O2"]
+df = df[[c for c in keep if c in df.columns]]
+
+df.to_csv("output_eegflow.csv", index=False)
+print("Ready! Shape:", df.shape)</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section: Common mistakes -->
+                <div class="guide-section">
+                    <div class="guide-section-header">
+                        <span class="guide-section-num">04</span>
+                        <div>
+                            <h2>Common Mistakes & Fixes</h2>
+                            <p>Avoid these issues to ensure your dataset loads without errors.</p>
+                        </div>
+                    </div>
+                    <div class="mistakes-grid">
+                        <div class="mistake-card">
+                            <div class="mistake-icon error-icon">❌</div>
+                            <div>
+                                <strong>No numeric channel columns detected</strong>
+                                <p>All channel columns are strings or the column names match an excluded metadata keyword. Rename electrode columns to standard 10-20 system names (e.g. <code>Fp1</code>, <code>C3</code>).</p>
+                            </div>
+                        </div>
+                        <div class="mistake-card">
+                            <div class="mistake-icon warning-icon">⚠️</div>
+                            <div>
+                                <strong>Sampling rate detected as 0 Hz</strong>
+                                <p>This happens when the time column has constant values or duplicate timestamps. Ensure <code>time_ms</code> strictly increases with each row.</p>
+                            </div>
+                        </div>
+                        <div class="mistake-card">
+                            <div class="mistake-icon error-icon">❌</div>
+                            <div>
+                                <strong>File is empty after loading</strong>
+                                <p>The CSV has only a header row with no data. Make sure your file contains at least 2 sample rows.</p>
+                            </div>
+                        </div>
+                        <div class="mistake-card">
+                            <div class="mistake-icon warning-icon">⚠️</div>
+                            <div>
+                                <strong>Columns like <code>age</code> or <code>session</code> treated as EEG</strong>
+                                <p>These are automatically excluded by EEGFlow. If your electrode has an unusual name that conflicts, rename it to a standard 10-20 label first.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Back to loader -->
+                <div class="upload-again-wrap" style="margin-top:40px;">
+                    <button class="browse-btn" id="backToLoaderBtn" style="border:none; cursor:pointer;">
+                        ↩ Back to Data Loader
+                    </button>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
