@@ -15,7 +15,7 @@ Created: Day 6 — 21.07.2026
 
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, sosfiltfilt, sosfreqz
+from scipy.signal import butter, sosfiltfilt, sosfreqz, iirnotch, tf2sos
 
 
 def design_bandpass_filter(
@@ -168,7 +168,108 @@ def apply_filter_to_dataframe(
     df_filtered = df.copy()  # Never modify the raw input data
 
     for channel in channels:
-        raw_signal               = df_filtered[channel].values.astype(float)
-        df_filtered[channel]     = apply_bandpass_filter(raw_signal, lowcut, highcut, fs, order)
+        raw_signal           = df_filtered[channel].values.astype(float)
+        df_filtered[channel] = apply_bandpass_filter(raw_signal, lowcut, highcut, fs, order)
+
+    return df_filtered
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NOTCH FILTER  — Power-line Interference Removal (50 Hz / 60 Hz)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def apply_notch_filter(
+    signal: np.ndarray,
+    notch_freq: float,
+    fs: float,
+    quality_factor: float = 30.0
+) -> np.ndarray:
+    """
+    Applies a zero-phase IIR Notch filter to a single EEG channel to remove
+    power-line interference at a specific frequency (typically 50 Hz or 60 Hz).
+
+    Unlike a band-pass filter that keeps a range of frequencies, a Notch filter
+    creates a very narrow 'notch' (deep cut) at exactly one frequency while
+    leaving all other frequencies virtually untouched.
+
+    The quality factor (Q) controls the notch width:
+      - High Q (e.g. 30) → very narrow notch → precise removal, minimal distortion.
+      - Low  Q (e.g. 5)  → wider notch → removes more around the target frequency.
+
+    Parameters
+    ----------
+    signal        : np.ndarray
+        1D array of raw EEG amplitude values (µV) for a single channel.
+    notch_freq    : float
+        Target frequency to remove in Hz. Typically 50.0 (Europe/Turkey) or 60.0 (USA).
+    fs            : float
+        Sampling frequency of the signal in Hz.
+    quality_factor: float, optional
+        Q-factor controlling the notch bandwidth. Default: 30.0 (narrow, precise).
+
+    Returns
+    -------
+    filtered : np.ndarray
+        1D array of notch-filtered signal values, same length as input.
+
+    Raises
+    ------
+    ValueError
+        If notch_freq is not a positive value strictly below the Nyquist frequency.
+    """
+    nyquist = fs / 2.0
+
+    if notch_freq <= 0:
+        raise ValueError(f"notch_freq must be positive. Got: {notch_freq} Hz.")
+
+    if notch_freq >= nyquist:
+        raise ValueError(
+            f"notch_freq ({notch_freq} Hz) must be below the Nyquist frequency ({nyquist} Hz)."
+        )
+
+    # Design the IIR Notch filter (returns b, a coefficients)
+    b, a = iirnotch(w0=notch_freq, Q=quality_factor, fs=fs)
+
+    # Convert (b, a) to SOS for numerical stability, then apply zero-phase filtering
+    sos      = tf2sos(b, a)
+    filtered = sosfiltfilt(sos, signal)
+    return filtered
+
+
+def apply_notch_to_dataframe(
+    df: pd.DataFrame,
+    channels: list,
+    notch_freq: float,
+    fs: float,
+    quality_factor: float = 30.0
+) -> pd.DataFrame:
+    """
+    Applies the Notch filter to every EEG channel column in a pandas DataFrame.
+
+    Non-channel columns (time, subject_id, event) are preserved unchanged.
+
+    Parameters
+    ----------
+    df            : pd.DataFrame
+        Input EEG DataFrame. Must contain columns listed in `channels`.
+    channels      : list of str
+        Column names of EEG electrode signals to be filtered.
+    notch_freq    : float
+        Target frequency to notch out in Hz (e.g. 50.0 or 60.0).
+    fs            : float
+        Sampling frequency in Hz.
+    quality_factor: float, optional
+        Q-factor. Default: 30.0.
+
+    Returns
+    -------
+    df_filtered : pd.DataFrame
+        New DataFrame with notch-filtered EEG channels. Input is not modified.
+    """
+    df_filtered = df.copy()
+
+    for channel in channels:
+        raw_signal           = df_filtered[channel].values.astype(float)
+        df_filtered[channel] = apply_notch_filter(raw_signal, notch_freq, fs, quality_factor)
 
     return df_filtered
