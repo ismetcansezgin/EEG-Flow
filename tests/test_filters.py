@@ -23,6 +23,8 @@ from backend.utils.filters import (
     apply_filter_to_dataframe,
     apply_notch_filter,
     apply_notch_to_dataframe,
+    apply_linear_detrend,
+    apply_detrend_to_dataframe,
 )
 
 # ─── Test constants ────────────────────────────────────────
@@ -201,3 +203,59 @@ def test_notch_filter_invalid_frequency_raises():
     """A notch_freq above Nyquist must raise ValueError."""
     with pytest.raises(ValueError, match="Nyquist"):
         apply_notch_filter(make_sine(10.0), notch_freq=200.0, fs=FS)
+
+
+# ════════════════════════════════════════════════════════
+# LINEAR DETRENDING TESTS
+# ════════════════════════════════════════════════════════
+
+def test_linear_detrend_removes_known_slope():
+    """
+    A pure linear ramp (y = slope * t) should be reduced to near-zero
+    after linear detrending. Residual RMS must be < 1% of original.
+    """
+    t         = np.arange(N) / FS
+    ramp      = 5.0 * t                  # 5 µV/s upward drift, no oscillation
+    detrended = apply_linear_detrend(ramp)
+
+    rms_original  = np.sqrt(np.mean(ramp ** 2))
+    rms_detrended = np.sqrt(np.mean(detrended ** 2))
+
+    assert rms_detrended < 0.01 * rms_original, (
+        f"Linear trend was not removed. "
+        f"RMS before={rms_original:.4f}, after={rms_detrended:.6f}"
+    )
+
+
+def test_linear_detrend_output_length_unchanged():
+    """Detrended signal must have the same number of samples as input."""
+    signal    = make_sine(10.0) + np.linspace(0, 20, N)
+    detrended = apply_linear_detrend(signal)
+    assert len(detrended) == len(signal)
+
+
+def test_detrend_dataframe_preserves_metadata():
+    """
+    Non-EEG columns (time_ms, subject_id, event) must be identical
+    before and after DataFrame-level detrending.
+    """
+    t = np.arange(N) / FS * 1000
+    df = pd.DataFrame({
+        "time_ms":    t,
+        "subject_id": np.ones(N, dtype=int),
+        "event":      np.array(["Relaxed"] * N),
+        "Fp1":        make_sine(10.0) + np.linspace(0, 20, N),
+        "C3":         make_sine(8.0)  + np.linspace(5, -5, N),
+    })
+
+    channels     = ["Fp1", "C3"]
+    df_detrended = apply_detrend_to_dataframe(df, channels)
+
+    # Metadata must be unchanged
+    pd.testing.assert_series_equal(df["time_ms"],    df_detrended["time_ms"])
+    pd.testing.assert_series_equal(df["subject_id"], df_detrended["subject_id"])
+    pd.testing.assert_series_equal(df["event"],      df_detrended["event"])
+
+    # EEG channels must have been modified
+    assert not np.allclose(df["Fp1"].values, df_detrended["Fp1"].values), \
+        "Fp1 channel was not detrended."
