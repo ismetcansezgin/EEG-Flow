@@ -273,3 +273,71 @@ def apply_notch_to_dataframe(
         df_filtered[channel] = apply_notch_filter(raw_signal, notch_freq, fs, quality_factor)
 
     return df_filtered
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LINEAR DETRENDING  — Baseline Drift Removal
+# ══════════════════════════════════════════════════════════════════════════════
+
+def apply_linear_detrend(signal: np.ndarray) -> np.ndarray:
+    """
+    Removes a linear trend (slow drift) from a single EEG channel signal.
+
+    During an EEG recording, electrodes can slowly drift up or down due to
+    sweat, movement, or skin-electrode impedance changes. This creates a
+    slow baseline shift that is NOT a real brain signal. Linear detrending
+    fits a straight line through the signal and subtracts it, centering the
+    signal around zero.
+
+    Example:
+        If a signal slowly rises from -5 µV to +15 µV over 10 seconds,
+        detrending will remove this ramp so the signal oscillates around 0 µV.
+
+    Parameters
+    ----------
+    signal : np.ndarray
+        1D array of raw EEG amplitude values (µV) for a single channel.
+
+    Returns
+    -------
+    detrended : np.ndarray
+        1D array with the linear baseline drift removed, same length as input.
+
+    Notes
+    -----
+    Equivalent to:
+        1. Fitting a least-squares line y = mx + b to the signal.
+        2. Subtracting it: detrended = signal - (mx + b).
+    """
+    from scipy.signal import detrend
+    return detrend(signal, type='linear')
+
+
+def apply_detrend_to_dataframe(
+    df: pd.DataFrame,
+    channels: list
+) -> pd.DataFrame:
+    """
+    Applies linear detrending to every EEG channel column in a pandas DataFrame.
+
+    Non-channel columns (time, subject_id, event) are preserved unchanged.
+
+    Parameters
+    ----------
+    df       : pd.DataFrame
+        Input EEG DataFrame. Must contain columns listed in `channels`.
+    channels : list of str
+        Column names of EEG electrode signals to be detrended.
+
+    Returns
+    -------
+    df_detrended : pd.DataFrame
+        New DataFrame with detrended EEG channels. Input is not modified.
+    """
+    df_detrended = df.copy()
+
+    for channel in channels:
+        raw_signal            = df_detrended[channel].values.astype(float)
+        df_detrended[channel] = apply_linear_detrend(raw_signal)
+
+    return df_detrended
