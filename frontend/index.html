@@ -38,10 +38,10 @@
                     <span class="nav-label">Data Loader</span>
                     <span class="nav-badge active-badge" id="badge-loader">Active</span>
                 </a>
-                <a href="#" class="nav-item locked" id="nav-preprocess">
+                <a href="#" class="nav-item" id="nav-preprocess" data-page="page-preprocess">
                     <span class="nav-icon">⚡</span>
                     <span class="nav-label">Preprocessing</span>
-                    <span class="nav-badge phase-badge">Phase 1</span>
+                    <span class="nav-badge active-badge" id="badge-preprocess">Active</span>
                 </a>
                 <a href="#" class="nav-item locked" id="nav-features">
                     <span class="nav-icon">📊</span>
@@ -502,6 +502,220 @@ print("Ready! Shape:", df.shape)</pre>
                         ↩ Back to Data Loader
                     </button>
                 </div>
+            </div>
+
+            <!-- ══════════════════════════════════════════════════════════════ -->
+            <!-- PAGE 3: PREPROCESSING DASHBOARD                              -->
+            <!-- ══════════════════════════════════════════════════════════════ -->
+            <div class="page-view" id="page-preprocess" style="display: none;">
+                <div class="page-header">
+                    <div>
+                        <h1 class="page-title">EEG Signal Preprocessing</h1>
+                        <p class="page-subtitle">Multi-stage digital filtering: Band-pass, Notch line noise removal, and Linear Detrending.</p>
+                    </div>
+                    <div class="header-badges">
+                        <span class="badge-pill version-pill">DSP Engine v1.0</span>
+                        <span class="badge-pill status-pill">Zero-Phase SOS</span>
+                    </div>
+                </div>
+
+                <!-- Active Dataset Banner -->
+                <div class="preprocess-banner" id="preprocessBanner">
+                    <div class="banner-icon">📁</div>
+                    <div class="banner-info">
+                        <h3 id="preprocessFileTitle">No Dataset Selected</h3>
+                        <p id="preprocessFileSub">Please upload an EEG dataset in the Data Loader page first, or use sample data.</p>
+                    </div>
+                    <button class="browse-btn" id="loadPreprocessSampleBtn" style="padding: 8px 16px; font-size:13px;">
+                        Load Sample CSV
+                    </button>
+                </div>
+
+                <!-- Filter Controls Grid -->
+                <div class="filter-controls-grid">
+                    
+                    <!-- CARD 1: Band-pass Filter -->
+                    <div class="filter-card">
+                        <div class="filter-card-header">
+                            <div class="filter-card-title">
+                                <span class="filter-icon">🌊</span>
+                                <div>
+                                    <h3>Butterworth Band-pass Filter</h3>
+                                    <p>Removes low-frequency drifts and high-frequency muscle noise.</p>
+                                </div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="toggleBandpass" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="filter-card-body" id="bandpassControls">
+                            <div class="control-group">
+                                <div class="control-label-wrap">
+                                    <label for="inputLowcut">High-pass Cut-off (Lowcut):</label>
+                                    <span class="val-badge" id="valLowcut">0.5 Hz</span>
+                                </div>
+                                <input type="range" class="filter-range" id="inputLowcut" min="0.1" max="10.0" step="0.1" value="0.5">
+                                <span class="range-hint">Cuts frequencies below this value (removes respiration/DC drift).</span>
+                            </div>
+
+                            <div class="control-group">
+                                <div class="control-label-wrap">
+                                    <label for="inputHighcut">Low-pass Cut-off (Highcut):</label>
+                                    <span class="val-badge" id="valHighcut">45.0 Hz</span>
+                                </div>
+                                <input type="range" class="filter-range" id="inputHighcut" min="20.0" max="100.0" step="1.0" value="45.0">
+                                <span class="range-hint">Cuts frequencies above this value (removes electromyographic noise).</span>
+                            </div>
+
+                            <div class="control-group">
+                                <label for="selectOrder">Filter Order:</label>
+                                <select class="filter-select" id="selectOrder">
+                                    <option value="2">Order 2 (12 dB/octave)</option>
+                                    <option value="4" selected>Order 4 (24 dB/octave - Recommended)</option>
+                                    <option value="6">Order 6 (36 dB/octave)</option>
+                                    <option value="8">Order 8 (48 dB/octave)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CARD 2: Notch Filter -->
+                    <div class="filter-card">
+                        <div class="filter-card-header">
+                            <div class="filter-card-title">
+                                <span class="filter-icon">⚡</span>
+                                <div>
+                                    <h3>IIR Notch Filter</h3>
+                                    <p>Eliminates power-line electrical interference at 50 Hz or 60 Hz.</p>
+                                </div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="toggleNotch" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="filter-card-body" id="notchControls">
+                            <div class="control-group">
+                                <label>Target Line Frequency:</label>
+                                <div class="radio-pill-group">
+                                    <label class="radio-pill active">
+                                        <input type="radio" name="notchFreqRadio" value="50.0" checked>
+                                        <span>50 Hz (Europe / Turkey)</span>
+                                    </label>
+                                    <label class="radio-pill">
+                                        <input type="radio" name="notchFreqRadio" value="60.0">
+                                        <span>60 Hz (USA / Americas)</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="control-group">
+                                <div class="control-label-wrap">
+                                    <label for="inputQualityFactor">Quality Factor (Q):</label>
+                                    <span class="val-badge" id="valQualityFactor">30.0</span>
+                                </div>
+                                <input type="range" class="filter-range" id="inputQualityFactor" min="5.0" max="50.0" step="1.0" value="30.0">
+                                <span class="range-hint">Higher Q = narrower notch cut width to protect adjacent brain rhythms.</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CARD 3: Linear Detrending -->
+                    <div class="filter-card">
+                        <div class="filter-card-header">
+                            <div class="filter-card-title">
+                                <span class="filter-icon">📐</span>
+                                <div>
+                                    <h3>Linear Detrending</h3>
+                                    <p>Subtracts best-fit linear slope to center signals at 0 µV baseline.</p>
+                                </div>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="toggleDetrend" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="filter-card-body" id="detrendControls">
+                            <div class="detrend-info-box">
+                                <span>💡</span>
+                                <p>Removes electrode polarization ramps caused by skin impedance changes, sweat, or subject movement during recording.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Action Button Container -->
+                <div class="filter-actions-bar">
+                    <button class="browse-btn filter-btn-primary" id="runFilterBtn">
+                        <span class="btn-text">⚡ Apply Signal Processing Pipeline</span>
+                        <span class="btn-spinner" id="filterSpinner" style="display:none;">⏳</span>
+                    </button>
+                    <button class="secondary-btn" id="resetFiltersBtn">
+                        ↺ Reset Parameters
+                    </button>
+                </div>
+
+                <!-- Filter Results Container -->
+                <div class="results-container" id="filterResultsContainer" style="display:none; margin-top:32px;">
+                    <div class="results-header">
+                        <h2>Filtering Metrics & Artifact Reduction</h2>
+                        <span class="timestamp-badge" id="filterTimestamp">Executed</span>
+                    </div>
+
+                    <!-- Summary Stats Grid -->
+                    <div class="kpi-grid">
+                        <div class="kpi-card">
+                            <span class="kpi-label">Channels Filtered</span>
+                            <span class="kpi-value" id="kpiChannelsCount">8 / 8</span>
+                            <span class="kpi-sub">All EEG channels processed</span>
+                        </div>
+                        <div class="kpi-card">
+                            <span class="kpi-label">Avg RMS Power Change</span>
+                            <span class="kpi-value" id="kpiRmsChange">-12.4%</span>
+                            <span class="kpi-sub">Noise energy attenuated</span>
+                        </div>
+                        <div class="kpi-card">
+                            <span class="kpi-label">Avg Peak-to-Peak Reduction</span>
+                            <span class="kpi-value" id="kpiPpReduction">-18.2%</span>
+                            <span class="kpi-sub">Transient spikes suppressed</span>
+                        </div>
+                        <div class="kpi-card">
+                            <span class="kpi-label">Phase Distortion</span>
+                            <span class="kpi-value highlight-val">0.0 ms</span>
+                            <span class="kpi-sub">Zero-phase forward-backward filtering</span>
+                        </div>
+                    </div>
+
+                    <!-- Comparison Table -->
+                    <div class="table-card">
+                        <div class="table-card-header">
+                            <h3>Per-Channel Signal Metrics (Before vs After)</h3>
+                            <span class="table-subtitle">Root Mean Square (RMS) and Peak-to-Peak amplitude values in µV</span>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="metrics-table" id="filterComparisonTable">
+                                <thead>
+                                    <tr>
+                                        <th>Channel</th>
+                                        <th>Raw RMS (µV)</th>
+                                        <th>Filtered RMS (µV)</th>
+                                        <th>RMS Change</th>
+                                        <th>Raw Peak-to-Peak (µV)</th>
+                                        <th>Filtered P-P (µV)</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="filterTableBody">
+                                    <!-- Dynamic Rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+
             </div>
 
         </main>
