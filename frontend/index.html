@@ -9,6 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="bg-orb orb-1"></div>
@@ -685,6 +686,37 @@ print("Ready! Shape:", df.shape)</pre>
                             <span class="kpi-label">Phase Distortion</span>
                             <span class="kpi-value highlight-val">0.0 ms</span>
                             <span class="kpi-sub">Zero-phase forward-backward filtering</span>
+                        </div>
+                    </div>
+
+                    <!-- Interactive Signal Waveform Plot Card (Chart.js) -->
+                    <div class="chart-card" style="margin-bottom: 28px;">
+                        <div class="chart-card-header">
+                            <div>
+                                <h3>Live Time-Series Waveform Comparison</h3>
+                                <p class="table-subtitle">Select an electrode channel to inspect real-time raw (orange) vs filtered (cyan) waveform overlap.</p>
+                            </div>
+                            <div class="chart-legend">
+                                <span class="legend-item raw-legend">
+                                    <span class="legend-dot"></span> Raw Signal (µV)
+                                </span>
+                                <span class="legend-item filt-legend">
+                                    <span class="legend-dot"></span> Filtered Signal (µV)
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Channel Selector Pills -->
+                        <div class="chart-channel-selector">
+                            <span class="selector-label">Select Channel:</span>
+                            <div class="channel-pills-wrap" id="chartChannelPills">
+                                <!-- Dynamic Channel Pills -->
+                            </div>
+                        </div>
+
+                        <!-- Canvas Container -->
+                        <div class="chart-canvas-wrap" style="position: relative; height: 320px; width: 100%;">
+                            <canvas id="signalChart"></canvas>
                         </div>
                     </div>
 
