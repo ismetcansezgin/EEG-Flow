@@ -13,6 +13,10 @@ EEG Sinyal İşleme ve Makine Öğrenmesi Sınıflandırma Kontrol Paneli
 | :---: | :---: |
 | ![Preprocessing Controls](docs/screenshots/04_preprocessing_controls.png) | ![Filtering Results](docs/screenshots/05_preprocessing_results.png) |
 
+| Canlı Sinyal Dalga Grafiği (Chart.js Raw vs Filtered) |
+| :---: |
+| ![Signal Waveform Chart](docs/screenshots/06_signal_waveform_chart.png) |
+
 ## Proje Hakkında
 EEGFlow; çok kanallı EEG (Elektroensefalografi) verilerini gürültülerden arındırmak (filtrelemek), zaman pencerelerine (epoch) bölmek, öznitelik (feature) çıkarımı yapmak ve klasik makine öğrenmesi modelleriyle sınıflandırmak amacıyla geliştirilmiş modüler bir web uygulamasıdır. 
 
