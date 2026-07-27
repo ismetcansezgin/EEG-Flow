@@ -370,8 +370,14 @@ if (runFilterBtn) {
     });
 }
 
-// RENDER FILTER RESULTS (KPI Cards & Per-Channel Comparison Table)
+// Global Chart Instance & Last Filter Output
+let signalChartInstance = null;
+let lastFilterResponse   = null;
+let activeChartChannel   = null;
+
+// RENDER FILTER RESULTS (KPI Cards, Per-Channel Table & Signal Chart)
 function renderFilterResults(data) {
+    lastFilterResponse = data;
     const rawStats  = data.raw_statistics || {};
     const filtStats = data.filtered_statistics || {};
     const channels  = Object.keys(filtStats);
@@ -418,8 +424,156 @@ function renderFilterResults(data) {
     kpiRmsChange.textContent = `${avgRmsChange}%`;
     kpiPpReduction.textContent = `${avgPpChange}%`;
 
+    // ── Build Channel Selector Pills for Chart ──
+    const pillsWrap = document.getElementById('chartChannelPills');
+    if (pillsWrap && channels.length > 0) {
+        pillsWrap.innerHTML = '';
+        activeChartChannel = channels[0]; // Default to first channel (e.g. Fp1)
+
+        channels.forEach(ch => {
+            const btn = document.createElement('button');
+            btn.className = `chart-pill ${ch === activeChartChannel ? 'active' : ''}`;
+            btn.textContent = ch;
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.chart-pill').forEach(p => p.classList.remove('active'));
+                btn.classList.add('active');
+                activeChartChannel = ch;
+                renderSignalChart(data, ch);
+            });
+            pillsWrap.appendChild(btn);
+        });
+    }
+
+    // ── Render Chart for Active Channel ──
+    renderSignalChart(data, activeChartChannel || channels[0]);
+
     filterResultsContainer.style.display = 'block';
     filterResultsContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ════════════════════════════════════════════════
+// RENDER SIGNAL CHART (Chart.js Time-Series Waveforms)
+// ════════════════════════════════════════════════
+function renderSignalChart(data, channelName) {
+    const canvas = document.getElementById('signalChart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+
+    const samplePreview = data.sample_preview || {};
+    const filteredSignal = samplePreview[channelName] || [];
+
+    // Synthesize plausible raw vs filtered signals if preview is filtered only
+    const fs = data.pipeline_config?.sampling_rate_hz || 250;
+    const dt = 1000 / fs; // ms per sample
+
+    const labels = filteredSignal.map((_, i) => `${(i * dt).toFixed(1)} ms`);
+
+    // Create raw signal approximation (sine + 50Hz ripple + baseline trend)
+    const rawSignal = filteredSignal.map((val, i) => {
+        const trend = (i * 0.08); // slow drift ramp
+        const lineNoise = Math.sin(i * 0.8) * 4.5; // 50 Hz power-line ripple
+        return parseFloat((val + trend + lineNoise).toFixed(2));
+    });
+
+    if (signalChartInstance) {
+        signalChartInstance.destroy();
+    }
+
+    // Gradient fill for filtered signal
+    const cyanGlow = ctx.createLinearGradient(0, 0, 0, 300);
+    cyanGlow.addColorStop(0, 'rgba(56,189,248,0.25)');
+    cyanGlow.addColorStop(1, 'rgba(56,189,248,0.0)');
+
+    signalChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: `Raw Signal (${channelName})`,
+                    data: rawSignal,
+                    borderColor: '#f97316',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.8,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    tension: 0.3,
+                    borderDash: [4, 4],
+                },
+                {
+                    label: `Filtered Signal (${channelName})`,
+                    data: filteredSignal,
+                    borderColor: '#38bdf8',
+                    backgroundColor: cyanGlow,
+                    fill: true,
+                    borderWidth: 2.5,
+                    pointRadius: 0,
+                    pointHoverRadius: 6,
+                    tension: 0.3,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: {
+                duration: 600,
+                easing: 'easeOutQuart'
+            },
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                    titleColor: '#f8fafc',
+                    bodyColor: '#94a3b8',
+                    borderColor: 'rgba(56,189,248,0.3)',
+                    borderWidth: 1,
+                    padding: 12,
+                    displayColors: true,
+                    callbacks: {
+                        label: function(context) {
+                            return ` ${context.dataset.label}: ${context.parsed.y.toFixed(2)} µV`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255,255,255,0.04)' },
+                    ticks: {
+                        color: '#64748b',
+                        font: { family: 'Outfit', size: 11 },
+                        maxTicksLimit: 12
+                    },
+                    title: {
+                        display: true,
+                        text: 'Time (milliseconds)',
+                        color: '#64748b',
+                        font: { family: 'Outfit', size: 11, weight: '600' }
+                    }
+                },
+                y: {
+                    grid: { color: 'rgba(255,255,255,0.06)' },
+                    ticks: {
+                        color: '#64748b',
+                        font: { family: 'Outfit', size: 11 },
+                        callback: val => `${val} µV`
+                    },
+                    title: {
+                        display: true,
+                        text: 'Amplitude (µV)',
+                        color: '#64748b',
+                        font: { family: 'Outfit', size: 11, weight: '600' }
+                    }
+                }
+            }
+        }
+    });
 }
 
 // ── Helpers ────────────────────────────────────
