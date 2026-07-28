@@ -77,7 +77,7 @@ def create_epochs(
             f"overlap_ratio must be in [0.0, 1.0). Got {overlap_ratio}."
         )
 
-    window_samples = int(window_size_sec * fs)
+    window_samples = int(round(window_size_sec * fs))
     if window_samples <= 0:
         raise ValueError(
             f"window_size_sec={window_size_sec} with fs={fs} yields "
@@ -99,7 +99,7 @@ def create_epochs(
             f"window ({window_samples} samples = {window_size_sec} s × {fs} Hz)."
         )
 
-    step_samples = max(1, int(window_samples * (1.0 - overlap_ratio)))
+    step_samples = max(1, int(round(window_samples * (1.0 - overlap_ratio))))
 
     # Calculate number of complete epochs
     n_epochs = (n_total - window_samples) // step_samples + 1
@@ -179,8 +179,8 @@ def create_epochs_from_dataframe(
     )
 
     n_epochs = epochs.shape[0]
-    window_samples = int(window_size_sec * fs)
-    step_samples   = max(1, int(window_samples * (1.0 - overlap_ratio)))
+    window_samples = int(round(window_size_sec * fs))
+    step_samples   = max(1, int(round(window_samples * (1.0 - overlap_ratio))))
 
     # ── Align event labels via majority vote per epoch window ──
     labels = []
@@ -189,20 +189,26 @@ def create_epochs_from_dataframe(
     has_events  = 'event'      in df.columns
     has_subject = 'subject_id' in df.columns
 
+    event_arr   = df['event'].to_numpy()      if has_events  else None
+    subject_arr = df['subject_id'].to_numpy() if has_subject else None
+
     for i in range(n_epochs):
         start = i * step_samples
         end   = start + window_samples
 
         if has_events:
-            window_events = df['event'].iloc[start:end]
-            label = window_events.mode()[0] if not window_events.empty else 'unknown'
+            slice_ev = event_arr[start:end]
+            # Fast majority vote using pd.Series.mode on numpy slice
+            mode_res = pd.Series(slice_ev).mode()
+            label = mode_res.iloc[0] if not mode_res.empty else 'unknown'
             labels.append(str(label))
         else:
             labels.append('unknown')
 
         if has_subject:
-            window_subjects = df['subject_id'].iloc[start:end]
-            subject = window_subjects.mode()[0] if not window_subjects.empty else None
+            slice_subj = subject_arr[start:end]
+            mode_res = pd.Series(slice_subj).mode()
+            subject = mode_res.iloc[0] if not mode_res.empty else None
             subjects.append(subject)
         else:
             subjects.append(None)
