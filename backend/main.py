@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from pathlib import Path
 import numpy as np
+import pandas as pd
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -14,6 +15,7 @@ from backend.utils.filters import (
     apply_notch_to_dataframe,
     apply_detrend_to_dataframe,
 )
+from backend.utils.epoching import create_epochs_from_dataframe
 
 # Resolve the frontend directory relative to this file
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -244,4 +246,146 @@ async def filter_eeg_file(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to execute signal filtering: {str(e)}"
+        )
+
+
+@app.post("/api/epoch")
+async def epoch_eeg_file(
+    file: UploadFile = File(...),
+    window_size_sec: str = Form("2.0"),
+    overlap_ratio: str = Form("0.5"),
+):
+    """
+    POST /api/epoch
+    ===============
+    Accepts an uploaded raw/filtered EEG CSV file and sliding window parameters,
+    executes time-window segmentation (epoching), and returns 3D epoch dimensions,
+    majority-vote event/subject labels, and epoch metadata.
+
+    Form Parameters:
+        - file: CSV file containing multi-channel EEG data.
+        - window_size_sec: Window duration in seconds (default: 2.0).
+        - overlap_ratio: Window overlap fraction between 0.0 and 0.9 (default: 0.5).
+
+    Returns:
+        JSON response with epoch_shape, n_epochs, labels, subjects, and epoch_info.
+    """
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type '{file.filename}'. Only CSV files (.csv) are supported."
+        )
+
+    # Validate parameters
+    try:
+        w_sec = float(window_size_sec)
+        o_ratio = float(overlap_ratio)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Parameters 'window_size_sec' and 'overlap_ratio' must be valid numeric values."
+        )
+
+    if w_sec <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid window_size_sec={w_sec}. Must be greater than 0."
+        )
+
+    if not 0.0 <= o_ratio < 1.0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid overlap_ratio={o_ratio}. Must be in range [0.0, 1.0)."
+        )
+
+    temp_file_path = None
+    try:
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as temp_file:
+            shutil.copyfileobj(file.file, temp_file)
+            temp_file_path = temp_file.name
+
+        # Load and validate CSV data
+        loader = EEGDataLoader(temp_file_path)
+        df_raw, info = loader.load_and_validate()
+
+        channels = info.get("channels", [])
+        fs = float(info.get("sampling_rate_hz", 250.0))
+
+        if not channels:
+            raise HTTPException(
+                status_code=400,
+                detail="No numeric EEG channel columns detected in CSV."
+            )
+
+        # Execute epoch segmentation
+        epoch_res = create_epochs_from_dataframe(
+            df=df_raw,
+            channels=channels,
+            fs=fs,
+            window_size_sec=w_sec,
+            overlap_ratio=o_ratio,
+        )
+
+        epochs_matrix = epoch_res["epochs"]   # shape: (n_epochs, n_channels, samples_per_epoch)
+
+        # Prepare first 2 epochs preview for frontend visualization
+        sample_preview = {}
+        n_preview = min(2, epoch_res["n_epochs"])
+        for ep_idx in range(n_preview):
+            ep_dict = {}
+            for ch_idx, ch_name in enumerate(channels):
+                # First 50 samples of this epoch for this channel
+                ep_dict[ch_name] = [
+                    round(float(v), 4) for v in epochs_matrix[ep_idx, ch_idx, :50]
+                ]
+            sample_preview[f"epoch_{ep_idx + 1}"] = ep_dict
+
+        # Clean up temporary file
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+        # Convert numpy int64/types in subjects list to native Python int/None for JSON serialization
+        raw_subjects = epoch_res.get("subjects")
+        clean_subjects = None
+        if raw_subjects is not None:
+            clean_subjects = [
+                int(s) if (s is not None and not pd.isna(s)) else None
+                for s in raw_subjects
+            ]
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "message": "EEG signal epoching successfully executed.",
+                "n_epochs": int(epoch_res["n_epochs"]),
+                "epoch_shape": [int(dim) for dim in epochs_matrix.shape],
+                "labels": [str(l) for l in epoch_res["labels"]],
+                "subjects": clean_subjects,
+                "epoch_info": {
+                    "window_size_sec": float(epoch_res["epoch_info"]["window_size_sec"]),
+                    "overlap_ratio": float(epoch_res["epoch_info"]["overlap_ratio"]),
+                    "fs": float(epoch_res["epoch_info"]["fs"]),
+                    "n_channels": int(epoch_res["epoch_info"]["n_channels"]),
+                    "samples_per_epoch": int(epoch_res["epoch_info"]["samples_per_epoch"]),
+                },
+                "sample_epoch_preview": sample_preview,
+            }
+        )
+
+    except HTTPException:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        raise
+    except ValueError as ve:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to execute signal epoching: {str(e)}"
         )
