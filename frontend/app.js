@@ -576,6 +576,189 @@ function renderSignalChart(data, channelName) {
     });
 }
 
+// ════════════════════════════════════════════════
+// SIGNAL EPOCHING CONTROLS & CALCULATIONS (DAY 13)
+// ════════════════════════════════════════════════
+
+const epochFileTitle     = document.getElementById('epochFileTitle');
+const epochFileSub       = document.getElementById('epochFileSub');
+const loadEpochSampleBtn = document.getElementById('loadEpochSampleBtn');
+
+const inputWindowSec     = document.getElementById('inputWindowSec');
+const valWindowSec       = document.getElementById('valWindowSec');
+const inputOverlapPct    = document.getElementById('inputOverlapPct');
+const valOverlapPct      = document.getElementById('valOverlapPct');
+const valStepSec         = document.getElementById('valStepSec');
+
+const calcStepSamples    = document.getElementById('calcStepSamples');
+const calcWinSamples     = document.getElementById('calcWinSamples');
+const calcAugFactor      = document.getElementById('calcAugFactor');
+
+const runEpochBtn        = document.getElementById('runEpochBtn');
+const epochSpinner       = document.getElementById('epochSpinner');
+const resetEpochBtn      = document.getElementById('resetEpochBtn');
+
+const epochResultsContainer = document.getElementById('epochResultsContainer');
+const tensorShapeVal        = document.getElementById('tensorShapeVal');
+const tensorShapeDesc       = document.getElementById('tensorShapeDesc');
+const kpiTotalEpochs        = document.getElementById('kpiTotalEpochs');
+const kpiSamplesPerEpoch    = document.getElementById('kpiSamplesPerEpoch');
+const kpiOverlapRatio       = document.getElementById('kpiOverlapRatio');
+const epochTimestamp        = document.getElementById('epochTimestamp');
+const epochClassPills       = document.getElementById('epochClassPills');
+const epochSubjectInfo      = document.getElementById('epochSubjectInfo');
+
+// Live calculation of epoch window step stride
+function updateEpochCalculations() {
+    if (!inputWindowSec || !inputOverlapPct) return;
+
+    const fs = lastMetadata?.sampling_rate_hz || 250;
+    const winSec = parseFloat(inputWindowSec.value);
+    const overlapPct = parseFloat(inputOverlapPct.value);
+    const overlapRatio = overlapPct / 100.0;
+
+    const winSamples = Math.round(winSec * fs);
+    const stepRatio  = 1.0 - overlapRatio;
+    const stepSec    = winSec * stepRatio;
+    const stepSamples = Math.max(1, Math.round(winSamples * stepRatio));
+    const augFactor  = overlapRatio < 1.0 ? (1.0 / stepRatio).toFixed(2) : '1.00';
+
+    if (valWindowSec) valWindowSec.textContent = `${winSec.toFixed(1)} s`;
+    if (valOverlapPct) valOverlapPct.textContent = `${overlapPct.toFixed(0)} %`;
+    if (valStepSec) valStepSec.textContent = `${stepSec.toFixed(1)} s step`;
+
+    if (calcStepSamples) calcStepSamples.textContent = `${stepSamples} samples (${stepSec.toFixed(1)} s)`;
+    if (calcWinSamples)  calcWinSamples.textContent  = `${winSamples} samples`;
+    if (calcAugFactor)   calcAugFactor.textContent   = `${augFactor}x multiplier`;
+}
+
+if (inputWindowSec)  inputWindowSec.addEventListener('input', updateEpochCalculations);
+if (inputOverlapPct) inputOverlapPct.addEventListener('input', updateEpochCalculations);
+
+// Load sample dataset handler for epoching
+if (loadEpochSampleBtn) {
+    loadEpochSampleBtn.addEventListener('click', async () => {
+        try {
+            loadEpochSampleBtn.textContent = 'Loading...';
+            const sampleFile = new File(["time_ms,subject_id,event,Fp1,Fp2,F3,F4,C3,C4,O1,O2\n0,1,Relaxed,12.4,14.2,10.1,11.5,9.8,10.2,8.4,8.9"], "sample_eeg.csv", { type: "text/csv" });
+            currentUploadedFile = sampleFile;
+            if (epochFileTitle) epochFileTitle.textContent = `Active Dataset: sample_eeg.csv`;
+            if (epochFileSub) epochFileSub.textContent = `8 EEG channels | 15,000 samples | 250 Hz`;
+            loadEpochSampleBtn.textContent = '✓ Sample Loaded';
+            setTimeout(() => { loadEpochSampleBtn.textContent = 'Load Sample CSV'; }, 2000);
+        } catch {
+            loadEpochSampleBtn.textContent = 'Load Sample CSV';
+        }
+    });
+}
+
+// Reset epoch parameters
+if (resetEpochBtn) {
+    resetEpochBtn.addEventListener('click', () => {
+        if (inputWindowSec) inputWindowSec.value = 2.0;
+        if (inputOverlapPct) inputOverlapPct.value = 50;
+        updateEpochCalculations();
+        if (epochResultsContainer) epochResultsContainer.style.display = 'none';
+    });
+}
+
+// EXECUTE EPOCH SEGMENTATION (POST /api/epoch)
+if (runEpochBtn) {
+    runEpochBtn.addEventListener('click', async () => {
+        if (!currentUploadedFile) {
+            alert('⚠️ Please select or upload an EEG CSV dataset first.');
+            showPage('page-loader');
+            return;
+        }
+
+        runEpochBtn.disabled = true;
+        if (epochSpinner) epochSpinner.style.display = 'inline-block';
+
+        const winSec = inputWindowSec.value;
+        const overlapRatio = (parseFloat(inputOverlapPct.value) / 100.0).toString();
+
+        const formData = new FormData();
+        formData.append('file', currentUploadedFile);
+        formData.append('window_size_sec', winSec);
+        formData.append('overlap_ratio', overlapRatio);
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/epoch`, {
+                method: 'POST',
+                body: formData
+            });
+
+            const json = await resp.json();
+            if (!resp.ok) throw new Error(json.detail || `HTTP ${resp.status}`);
+            if (!json.success) throw new Error(json.detail || 'Epoching failed.');
+
+            renderEpochResults(json);
+        } catch (err) {
+            alert(`⚠️ Epoch Execution Failed: ${err.message}`);
+        } finally {
+            runEpochBtn.disabled = false;
+            if (epochSpinner) epochSpinner.style.display = 'none';
+        }
+    });
+}
+
+// RENDER EPOCH RESULTS (3D Tensor Shape & Label Summary)
+function renderEpochResults(data) {
+    const shape = data.epoch_shape || [0, 0, 0];
+    const nEpochs  = shape[0] || data.n_epochs || 0;
+    const nChannels = shape[1] || 8;
+    const nSamples  = shape[2] || 500;
+
+    if (tensorShapeVal) tensorShapeVal.textContent = `(${nEpochs} × ${nChannels} × ${nSamples})`;
+    if (tensorShapeDesc) {
+        tensorShapeDesc.textContent = `${nEpochs} total epoch windows generated across ${nChannels} EEG channels, with ${nSamples} samples per window.`;
+    }
+
+    if (kpiTotalEpochs) kpiTotalEpochs.textContent = nEpochs;
+    if (kpiSamplesPerEpoch) kpiSamplesPerEpoch.textContent = nSamples;
+    if (kpiOverlapRatio) kpiOverlapRatio.textContent = `${(data.epoch_info?.overlap_ratio * 100).toFixed(1)}%`;
+    if (epochTimestamp) epochTimestamp.textContent = new Date().toLocaleTimeString();
+
+    // Event class counts
+    const labels = data.labels || [];
+    const counts = {};
+    labels.forEach(l => { counts[l] = (counts[l] || 0) + 1; });
+
+    if (epochClassPills) {
+        epochClassPills.innerHTML = '';
+        Object.entries(counts).forEach(([cls, count]) => {
+            const pill = document.createElement('span');
+            pill.className = 'pill';
+            pill.innerHTML = `<strong>${cls}</strong>: ${count} epochs (${((count/labels.length)*100).toFixed(1)}%)`;
+            epochClassPills.appendChild(pill);
+        });
+    }
+
+    // Subject summary
+    const subjects = data.subjects || [];
+    if (epochSubjectInfo) {
+        epochSubjectInfo.innerHTML = '';
+        if (subjects && subjects.length) {
+            const subjCounts = {};
+            subjects.forEach(s => { if (s) subjCounts[s] = (subjCounts[s] || 0) + 1; });
+
+            Object.entries(subjCounts).forEach(([subj, c]) => {
+                const row = document.createElement('div');
+                row.className = 'info-row';
+                row.innerHTML = `<span class="info-key">Subject ${subj}</span><span class="info-val">${c} epochs</span>`;
+                epochSubjectInfo.appendChild(row);
+            });
+        } else {
+            epochSubjectInfo.innerHTML = `<div class="info-row"><span class="info-key">Subject Column</span><span class="info-val">None (Single Session)</span></div>`;
+        }
+    }
+
+    if (epochResultsContainer) {
+        epochResultsContainer.style.display = 'block';
+        epochResultsContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
 // ── Helpers ────────────────────────────────────
 function setProgress(pct, label) {
     progressFill.style.width = `${pct}%`;
@@ -585,4 +768,5 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Init ───────────────────────────────────────
 checkAPIHealth();
+updateEpochCalculations();
 setInterval(checkAPIHealth, 30_000);
