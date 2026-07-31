@@ -80,13 +80,19 @@ def extract_time_domain_features(
         for ch_idx, ch_name in enumerate(channel_names):
             sig = epochs[ep_idx, ch_idx, :]
 
+            sig_std = float(np.std(sig))
             mean_val = float(np.mean(sig))
-            std_val  = float(np.std(sig))
+            std_val  = sig_std
             var_val  = float(np.var(sig))
             rms_val  = float(np.sqrt(np.mean(sig ** 2)))
             ptp_val  = float(np.ptp(sig))
-            skew_val = float(scipy_stats.skew(sig))
-            kurt_val = float(scipy_stats.kurtosis(sig))
+
+            if sig_std > 1e-9:
+                skew_val = float(scipy_stats.skew(sig))
+                kurt_val = float(scipy_stats.kurtosis(sig))
+            else:
+                skew_val = 0.0
+                kurt_val = 0.0
 
             row_dict[f'{ch_name}_mean']     = round(mean_val, 6)
             row_dict[f'{ch_name}_std']      = round(std_val, 6)
@@ -107,7 +113,7 @@ def extract_frequency_domain_features(
     channel_names: list = None
 ) -> pd.DataFrame:
     """
-    Extracts 12 frequency-domain band power features per channel using Welch's PSD.
+    Extracts 11 frequency-domain band power features per channel using Welch's PSD.
 
     Band Powers Extracted:
       - Absolute Powers: Delta, Theta, Alpha, Beta, Gamma, Total Power
@@ -147,23 +153,23 @@ def extract_frequency_domain_features(
 
             # Compute Welch Power Spectral Density
             freqs, psd = scipy_signal.welch(sig, fs=fs, nperseg=nperseg)
-
             freq_res = freqs[1] - freqs[0] if len(freqs) > 1 else 1.0
 
-            # Calculate total power across 0.5–45 Hz
-            total_mask = (freqs >= 0.5) & (freqs <= 45.0)
-            total_power = float(np.sum(psd[total_mask]) * freq_res)
+            # Compute absolute power for each band
+            band_powers = {}
+            for band_name, (f_low, f_high) in EEG_BANDS.items():
+                band_mask = (freqs >= f_low) & (freqs < f_high if band_name != 'gamma' else freqs <= f_high)
+                band_pow  = float(np.sum(psd[band_mask]) * freq_res)
+                band_powers[band_name] = band_pow
+
+            total_power = sum(band_powers.values())
             if total_power <= 0:
-                total_power = 1e-10  # Prevent division by zero
+                total_power = 1e-10
 
             row_dict[f'{ch_name}_total_power'] = round(total_power, 6)
 
-            # Compute absolute and relative power per band
-            for band_name, (f_low, f_high) in EEG_BANDS.items():
-                band_mask = (freqs >= f_low) & (freqs <= f_high)
-                band_pow = float(np.sum(psd[band_mask]) * freq_res)
-                rel_pow  = band_pow / total_power
-
+            for band_name, band_pow in band_powers.items():
+                rel_pow = band_pow / total_power
                 row_dict[f'{ch_name}_{band_name}_power']     = round(band_pow, 6)
                 row_dict[f'{ch_name}_rel_{band_name}_power'] = round(rel_pow, 6)
 
