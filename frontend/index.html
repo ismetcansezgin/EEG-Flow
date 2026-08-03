@@ -44,10 +44,10 @@
                     <span class="nav-label">Preprocessing</span>
                     <span class="nav-badge active-badge" id="badge-preprocess">Active</span>
                 </a>
-                <a href="#" class="nav-item locked" id="nav-features">
+                <a href="#" class="nav-item" id="nav-epoching" data-page="page-epoching">
                     <span class="nav-icon">📊</span>
-                    <span class="nav-label">Feature Engine</span>
-                    <span class="nav-badge phase-badge">Phase 2</span>
+                    <span class="nav-label">Signal Epoching</span>
+                    <span class="nav-badge active-badge" id="badge-epoching">Active</span>
                 </a>
                 <a href="#" class="nav-item locked" id="nav-models">
                     <span class="nav-icon">🤖</span>
@@ -743,6 +743,184 @@ print("Ready! Shape:", df.shape)</pre>
                                     <!-- Dynamic Rows -->
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- ══════════════════════════════════════════════════════════════ -->
+            <!-- PAGE 4: SIGNAL EPOCHING DASHBOARD (DAY 13)                    -->
+            <!-- ══════════════════════════════════════════════════════════════ -->
+            <div class="page-view" id="page-epoching" style="display: none;">
+                <div class="page-header">
+                    <div>
+                        <h1 class="page-title">EEG Signal Epoching & Windowing</h1>
+                        <p class="page-subtitle">Segmentation of continuous multi-channel EEG signals into fixed-duration sliding time windows.</p>
+                    </div>
+                    <div class="header-badges">
+                        <span class="badge-pill version-pill">Phase 2 Engine</span>
+                        <span class="badge-pill status-pill">3D Matrix Builder</span>
+                    </div>
+                </div>
+
+                <!-- Active Dataset Banner -->
+                <div class="preprocess-banner" id="epochBanner">
+                    <div class="banner-icon">📁</div>
+                    <div class="banner-info">
+                        <h3 id="epochFileTitle">No Dataset Selected</h3>
+                        <p id="epochFileSub">Upload an EEG dataset in the Data Loader page or load a sample dataset first.</p>
+                    </div>
+                    <button class="browse-btn" id="loadEpochSampleBtn" style="padding: 8px 16px; font-size:13px;">
+                        Load Sample CSV
+                    </button>
+                </div>
+
+                <!-- Epoch Controls Grid -->
+                <div class="filter-controls-grid">
+                    
+                    <!-- CARD 1: Window Duration -->
+                    <div class="filter-card">
+                        <div class="filter-card-header">
+                            <div class="filter-card-title">
+                                <span class="filter-icon">⏱️</span>
+                                <div>
+                                    <h3>Epoch Window Duration</h3>
+                                    <p>Length of each temporal segment in seconds.</p>
+                                </div>
+                            </div>
+                            <span class="val-badge" id="valWindowSec">2.0 s</span>
+                        </div>
+                        <div class="filter-card-body">
+                            <div class="control-group">
+                                <div class="control-label-wrap">
+                                    <label for="inputWindowSec">Window Size (seconds):</label>
+                                </div>
+                                <input type="range" class="filter-range" id="inputWindowSec" min="0.5" max="5.0" step="0.1" value="2.0">
+                                <span class="range-hint">Determines temporal resolution per epoch (2.0 s = 500 samples @ 250 Hz).</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CARD 2: Window Overlap Ratio -->
+                    <div class="filter-card">
+                        <div class="filter-card-header">
+                            <div class="filter-card-title">
+                                <span class="filter-icon">🔄</span>
+                                <div>
+                                    <h3>Sliding Overlap Ratio</h3>
+                                    <p>Percentage of overlap between consecutive windows.</p>
+                                </div>
+                            </div>
+                            <span class="val-badge" id="valOverlapPct">50 %</span>
+                        </div>
+                        <div class="filter-card-body">
+                            <div class="control-group">
+                                <div class="control-label-wrap">
+                                    <label for="inputOverlapPct">Overlap Percentage (%):</label>
+                                </div>
+                                <input type="range" class="filter-range" id="inputOverlapPct" min="0" max="80" step="5" value="50">
+                                <span class="range-hint">50% overlap doubles total epoch count (Data Augmentation).</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CARD 3: Computed Parameters -->
+                    <div class="filter-card">
+                        <div class="filter-card-header">
+                            <div class="filter-card-title">
+                                <span class="filter-icon">🧮</span>
+                                <div>
+                                    <h3>Computed Step Specs</h3>
+                                    <p>Live calculation of stride step and sample sizes.</p>
+                                </div>
+                            </div>
+                            <span class="val-badge" id="valStepSec">1.0 s step</span>
+                        </div>
+                        <div class="filter-card-body">
+                            <div class="detrend-info-box" style="flex-direction: column; gap: 8px;">
+                                <div><strong>Step Stride:</strong> <span id="calcStepSamples">250 samples (1.0 s)</span></div>
+                                <div><strong>Samples per Epoch:</strong> <span id="calcWinSamples">500 samples</span></div>
+                                <div><strong>Augmentation Factor:</strong> <span id="calcAugFactor">2.00x multiplier</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Action Button Container -->
+                <div class="filter-actions-bar">
+                    <button class="browse-btn filter-btn-primary" id="runEpochBtn">
+                        <span class="btn-text">⚡ Generate EEG Epochs</span>
+                        <span class="btn-spinner" id="epochSpinner" style="display:none;">⏳</span>
+                    </button>
+                    <button class="secondary-btn" id="resetEpochBtn">
+                        ↺ Reset Parameters
+                    </button>
+                </div>
+
+                <!-- Epoch Results Container -->
+                <div class="results-container" id="epochResultsContainer" style="display:none; margin-top:32px;">
+                    <div class="results-header">
+                        <h2>Epoch Segmentation & 3D Tensor Dimensions</h2>
+                        <span class="timestamp-badge" id="epochTimestamp">Executed</span>
+                    </div>
+
+                    <!-- 3D Tensor Shape Callout Banner -->
+                    <div class="tensor-shape-banner" style="margin-bottom: 24px;">
+                        <div class="tensor-icon">📦</div>
+                        <div class="tensor-info">
+                            <span class="tensor-label">Output 3D Tensor Shape (N_epochs × N_channels × N_samples)</span>
+                            <h2 class="tensor-matrix-val" id="tensorShapeVal">(59 × 8 × 500)</h2>
+                            <p class="tensor-desc" id="tensorShapeDesc">59 total epoch windows generated across 8 EEG channels, with 500 samples per window.</p>
+                        </div>
+                    </div>
+
+                    <!-- Summary Stats Grid -->
+                    <div class="kpi-grid">
+                        <div class="kpi-card">
+                            <span class="kpi-label">Total Epochs Created</span>
+                            <span class="kpi-value" id="kpiTotalEpochs">59</span>
+                            <span class="kpi-sub">Segmented temporal windows</span>
+                        </div>
+                        <div class="kpi-card">
+                            <span class="kpi-label">Samples per Epoch</span>
+                            <span class="kpi-value" id="kpiSamplesPerEpoch">500</span>
+                            <span class="kpi-sub">2.0 s @ 250 Hz sampling</span>
+                        </div>
+                        <div class="kpi-card">
+                            <span class="kpi-label">Overlap Ratio</span>
+                            <span class="kpi-value" id="kpiOverlapRatio">50.0%</span>
+                            <span class="kpi-sub">1.0 s step stride</span>
+                        </div>
+                        <div class="kpi-card">
+                            <span class="kpi-label">Label Alignment</span>
+                            <span class="kpi-value highlight-val" id="kpiLabelAlignment">Majority</span>
+                            <span class="kpi-sub">Event class vote per window</span>
+                        </div>
+                    </div>
+
+                    <!-- Class & Subject Label Distribution -->
+                    <div class="detail-row">
+                        <div class="detail-card">
+                            <div class="detail-card-header">
+                                <span class="detail-icon">🏷️</span>
+                                <h4>Event Class Distribution per Epoch</h4>
+                            </div>
+                            <div class="pills-container" id="epochClassPills">
+                                <!-- Dynamic Event Pills -->
+                            </div>
+                        </div>
+
+                        <div class="detail-card">
+                            <div class="detail-card-header">
+                                <span class="detail-icon">👤</span>
+                                <h4>Subject Alignment Summary</h4>
+                            </div>
+                            <div class="info-table" id="epochSubjectInfo">
+                                <!-- Dynamic Subject Info -->
+                            </div>
                         </div>
                     </div>
 

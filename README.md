@@ -17,6 +17,10 @@ EEG Sinyal İşleme ve Makine Öğrenmesi Sınıflandırma Kontrol Paneli
 | :---: |
 | ![Signal Waveform Chart](docs/screenshots/06_signal_waveform_chart.png) |
 
+| Signal Epoching Kontrol Paneli (Sliding Window) | 3D Tensor Matrisi & Etiket Dağılımı |
+| :---: | :---: |
+| ![Epoching Controls](docs/screenshots/07_epoching_controls.png) | ![Epoching Results](docs/screenshots/08_epoching_tensor_results.png) |
+
 ## Proje Hakkında
 EEGFlow; çok kanallı EEG (Elektroensefalografi) verilerini gürültülerden arındırmak (filtrelemek), zaman pencerelerine (epoch) bölmek, öznitelik (feature) çıkarımı yapmak ve klasik makine öğrenmesi modelleriyle sınıflandırmak amacıyla geliştirilmiş modüler bir web uygulamasıdır. 
 
