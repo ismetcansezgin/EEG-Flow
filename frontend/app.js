@@ -1053,7 +1053,7 @@ function renderValidationBadge(alphaValidation) {
 
     if (isValid) {
         if (icon)  icon.textContent  = '✅';
-        if (title) title.textContent = 'Alpha ERD Confirmed (Milestone 2 ✓)';
+        if (title) title.textContent = 'Alpha ERD Confirmed ✅';
         if (desc)  desc.textContent  = `"${maxCls}" shows ${(maxAlpha * 100).toFixed(1)}% relative Alpha power vs "${minCls}" at ${(minAlpha * 100).toFixed(1)}% — a ${ratio}× suppression ratio. Feature extraction is physiologically valid.`;
     } else {
         if (icon)  icon.textContent  = '⚠️';
