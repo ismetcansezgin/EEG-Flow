@@ -1,7 +1,7 @@
-"""
+﻿"""
 backend/utils/features.py
 =========================
-EEGFlow — EEG Signal Feature Extraction Engine (Phase 2)
+EEGFlow ÔÇö EEG Signal Feature Extraction Engine (Phase 2)
 
 Transforms 3D epoched EEG matrices (n_epochs, n_channels, n_samples)
 into 2D tabular feature DataFrames (n_epochs, n_features) suitable for
@@ -23,7 +23,7 @@ Feature Categories Extracted per Channel:
      - Relative Band Powers: Ratio of each band power to total power.
 
 Author  : EEGFlow Internship Project
-Created : Day 14 — 31.07.2026
+Created : Day 14 ÔÇö 31.07.2026
 """
 
 import numpy as np
@@ -54,7 +54,7 @@ def extract_time_domain_features(
     epochs : np.ndarray
         Epoched EEG signal array. Accepted shapes:
           - (n_epochs, n_channels, n_samples)
-          - (n_channels, n_samples) → treated as 1 epoch
+          - (n_channels, n_samples) ÔåÆ treated as 1 epoch
     channel_names : list of str, optional
         Electrode channel names. Defaults to ['CH1', 'CH2', ...].
 

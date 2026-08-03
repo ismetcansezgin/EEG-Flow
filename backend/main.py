@@ -16,6 +16,7 @@ from backend.utils.filters import (
     apply_detrend_to_dataframe,
 )
 from backend.utils.epoching import create_epochs_from_dataframe
+from backend.utils.features import extract_all_features
 
 # Resolve the frontend directory relative to this file
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -388,4 +389,187 @@ async def epoch_eeg_file(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to execute signal epoching: {str(e)}"
+        )
+
+
+@app.post("/api/extract-features")
+async def extract_eeg_features(
+    file: UploadFile = File(...),
+    window_size_sec: str = Form("2.0"),
+    overlap_ratio: str = Form("0.5"),
+    include_time_features: str = Form("true"),
+    include_freq_features: str = Form("true"),
+):
+    """
+    POST /api/extract-features
+    ==========================
+    Accepts an uploaded EEG CSV file, segments it into epochs using a sliding
+    window, extracts time-domain and/or frequency-domain features per epoch,
+    and returns the feature matrix metadata with per-class band power summaries
+    for Alpha wave validation visualization (Milestone 2).
+
+    Form Parameters:
+        - file: CSV file containing multi-channel EEG data.
+        - window_size_sec: Window duration in seconds (default: 2.0).
+        - overlap_ratio: Window overlap fraction 0.0-0.9 (default: 0.5).
+        - include_time_features: Include time-domain features (default: true).
+        - include_freq_features: Include frequency-domain PSD features (default: true).
+
+    Returns:
+        JSON with feature_matrix_shape, feature_names, per-class band power
+        summaries, and sample feature previews.
+    """
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type '{file.filename}'. Only CSV files (.csv) are supported."
+        )
+
+    try:
+        w_sec    = float(window_size_sec)
+        o_ratio  = float(overlap_ratio)
+        do_time  = include_time_features.lower() == "true"
+        do_freq  = include_freq_features.lower() == "true"
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Parameters must be valid numeric or boolean values."
+        )
+
+    if w_sec <= 0:
+        raise HTTPException(status_code=400, detail=f"Invalid window_size_sec={w_sec}. Must be > 0.")
+    if not 0.0 <= o_ratio < 1.0:
+        raise HTTPException(status_code=400, detail=f"Invalid overlap_ratio={o_ratio}. Must be in [0.0, 1.0).")
+    if not do_time and not do_freq:
+        raise HTTPException(status_code=400, detail="At least one of include_time_features or include_freq_features must be true.")
+
+    temp_file_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            temp_file_path = tmp.name
+
+        loader = EEGDataLoader(temp_file_path)
+        df_raw, info = loader.load_and_validate()
+
+        channels = info.get("channels", [])
+        fs = float(info.get("sampling_rate_hz", 250.0))
+
+        if not channels:
+            raise HTTPException(status_code=400, detail="No numeric EEG channel columns detected in CSV.")
+
+        # Step 1: Epoch the signal
+        epoch_res = create_epochs_from_dataframe(
+            df=df_raw, channels=channels, fs=fs,
+            window_size_sec=w_sec, overlap_ratio=o_ratio,
+        )
+        epochs_matrix = epoch_res["epochs"]
+        labels   = epoch_res["labels"]
+        subjects = epoch_res["subjects"]
+
+        # Step 2: Extract features
+        df_features = extract_all_features(
+            epochs   = epochs_matrix,
+            fs       = fs,
+            channel_names = channels,
+            labels   = labels if labels else None,
+            subjects = [int(s) if (s is not None and not pd.isna(s)) else None for s in subjects] if subjects else None,
+        )
+
+        # Filter feature columns by user selection
+        time_suffixes = ["_mean", "_std", "_var", "_rms", "_ptp", "_skew", "_kurtosis"]
+        freq_suffixes = ["_power", "_total_power"]
+        metadata_cols = ["event", "subject_id"]
+
+        selected_cols = []
+        for col in df_features.columns:
+            if col in metadata_cols:
+                selected_cols.append(col)
+                continue
+            is_time = any(col.endswith(s) for s in time_suffixes)
+            is_freq = any(s in col for s in freq_suffixes)
+            if (do_time and is_time) or (do_freq and is_freq):
+                selected_cols.append(col)
+
+        df_selected = df_features[selected_cols]
+        feature_cols = [c for c in selected_cols if c not in metadata_cols]
+        n_features = len(feature_cols)
+        n_epochs   = len(df_selected)
+
+        # Step 3: Compute per-class band power summaries for Alpha-wave validation
+        eeg_bands = ["delta", "theta", "alpha", "beta", "gamma"]
+        class_band_summary = {}
+        unique_labels = list(set(labels)) if labels else []
+
+        for lbl in unique_labels:
+            lbl_mask = [i for i, l in enumerate(labels) if l == lbl]
+            lbl_df   = df_features.iloc[lbl_mask]
+            band_avgs = {}
+            for band in eeg_bands:
+                band_cols = [c for c in feature_cols if f"_{band}_power" in c and "rel_" not in c]
+                if band_cols:
+                    mean_power = float(lbl_df[band_cols].values.mean())
+                    band_avgs[band] = round(mean_power, 6)
+            class_band_summary[str(lbl)] = band_avgs
+
+        # Step 4: Relative alpha per class (for Alpha wave validation chart)
+        alpha_validation = {}
+        for lbl in unique_labels:
+            lbl_mask = [i for i, l in enumerate(labels) if l == lbl]
+            lbl_df   = df_features.iloc[lbl_mask]
+            rel_alpha_cols = [c for c in feature_cols if "rel_alpha_power" in c]
+            if rel_alpha_cols:
+                mean_rel_alpha = float(lbl_df[rel_alpha_cols].values.mean())
+                alpha_validation[str(lbl)] = round(mean_rel_alpha, 6)
+
+        # Step 5: Sample feature preview (first 2 epochs, first 5 features)
+        preview_features = feature_cols[:5]
+        sample_preview = []
+        for i in range(min(2, n_epochs)):
+            row = {col: round(float(df_selected.iloc[i][col]), 4) for col in preview_features}
+            if "event" in df_selected.columns:
+                row["event"] = str(df_selected.iloc[i]["event"])
+            sample_preview.append(row)
+
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "message": "EEG feature extraction successfully executed.",
+                "feature_matrix_shape": [n_epochs, n_features],
+                "n_epochs":   n_epochs,
+                "n_features": n_features,
+                "feature_names": feature_cols,
+                "time_domain_count": len([c for c in feature_cols if any(c.endswith(s) for s in time_suffixes)]),
+                "freq_domain_count": len([c for c in feature_cols if any(s in c for s in freq_suffixes)]),
+                "class_band_summary":  class_band_summary,
+                "alpha_validation":    alpha_validation,
+                "sample_preview":      sample_preview,
+                "epoch_info": {
+                    "window_size_sec":  float(w_sec),
+                    "overlap_ratio":    float(o_ratio),
+                    "fs":               float(fs),
+                    "n_channels":       int(len(channels)),
+                    "samples_per_epoch": int(round(w_sec * fs)),
+                },
+            }
+        )
+
+    except HTTPException:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        raise
+    except ValueError as ve:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to execute feature extraction: {str(e)}"
         )
