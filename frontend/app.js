@@ -770,3 +770,321 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 checkAPIHealth();
 updateEpochCalculations();
 setInterval(checkAPIHealth, 30_000);
+
+
+/* ════════════════════════════════════════════════
+   FEATURE ENGINE — Phase 2 Alpha Wave Validation
+   ════════════════════════════════════════════════ */
+
+// ── Feature Engine DOM references ──────────────
+const featWindowSlider = document.getElementById('featWindowSlider');
+const featWindowVal    = document.getElementById('featWindowVal');
+const featWindowHint   = document.getElementById('featWindowHint');
+const featOverlapSlider= document.getElementById('featOverlapSlider');
+const featOverlapVal   = document.getElementById('featOverlapVal');
+const featOverlapHint  = document.getElementById('featOverlapHint');
+const btnExtractFeatures = document.getElementById('btnExtractFeatures');
+const btnResetFeatures   = document.getElementById('btnResetFeatures');
+const featNoDataset    = document.getElementById('featNoDataset');
+const featControls     = document.getElementById('featControls');
+const featActions      = document.getElementById('featActions');
+const featResultsSection = document.getElementById('featResultsSection');
+const featLoadSample   = document.getElementById('featLoadSample');
+
+// ── Feature Engine Slider Live Updates ─────────
+if (featWindowSlider) {
+    featWindowSlider.addEventListener('input', () => {
+        const v = parseFloat(featWindowSlider.value);
+        featWindowVal.textContent = `${v.toFixed(1)} s`;
+        const fs = (lastMetadata && lastMetadata.sampling_rate_hz) ? lastMetadata.sampling_rate_hz : 250;
+        const samples = Math.round(v * fs);
+        featWindowHint.textContent = `Determines temporal resolution per epoch (${v.toFixed(1)} s × ${fs} Hz = ${samples} samples @ ${fs} Hz).`;
+    });
+}
+
+if (featOverlapSlider) {
+    featOverlapSlider.addEventListener('input', () => {
+        const pct = parseInt(featOverlapSlider.value);
+        const ratio = pct / 100;
+        featOverlapVal.textContent = `${pct}%`;
+        const augFactor = ratio < 1 ? (1 / (1 - ratio)).toFixed(2) : '∞';
+        featOverlapHint.textContent = `${pct}% overlap = ${augFactor}× data augmentation multiplier.`;
+    });
+}
+
+// ── Feature Engine: Show controls if file loaded ─
+function featCheckDataset() {
+    if (!featNoDataset || !featControls || !featActions) return;
+    if (currentUploadedFile) {
+        featNoDataset.style.display = 'none';
+        featControls.style.display  = 'grid';
+        featActions.style.display   = 'flex';
+    } else {
+        featNoDataset.style.display = 'flex';
+        featControls.style.display  = 'none';
+        featActions.style.display   = 'none';
+        if (featResultsSection) featResultsSection.style.display = 'none';
+    }
+}
+
+// ── Feature Engine: Load Sample ─────────────────
+if (featLoadSample) {
+    featLoadSample.addEventListener('click', async () => {
+        const resp = await fetch(`${API_BASE}/static/sample_eeg.csv`);
+        if (!resp.ok) {
+            // Try data path via API
+            alert('Please first load a CSV file from the Data Loader page.');
+            return;
+        }
+        const blob = await resp.blob();
+        currentUploadedFile = new File([blob], 'sample_eeg.csv', { type: 'text/csv' });
+        featCheckDataset();
+    });
+}
+
+// ── Feature Engine: Extract Button ─────────────
+if (btnExtractFeatures) {
+    btnExtractFeatures.addEventListener('click', async () => {
+        if (!currentUploadedFile) {
+            alert('Please load a CSV dataset first (Data Loader page).');
+            return;
+        }
+
+        const windowSec  = parseFloat(featWindowSlider ? featWindowSlider.value : 2.0);
+        const overlapPct = parseInt(featOverlapSlider ? featOverlapSlider.value : 50);
+        const overlapRatio = (overlapPct / 100).toFixed(2);
+        const includeTime = document.getElementById('featIncludeTime') ? document.getElementById('featIncludeTime').checked : true;
+        const includeFreq = document.getElementById('featIncludeFreq') ? document.getElementById('featIncludeFreq').checked : true;
+
+        if (!includeTime && !includeFreq) {
+            alert('Please enable at least one feature domain (Time or Frequency).');
+            return;
+        }
+
+        btnExtractFeatures.disabled = true;
+        btnExtractFeatures.textContent = '⏳ Extracting Features…';
+
+        const formData = new FormData();
+        formData.append('file', currentUploadedFile);
+        formData.append('window_size_sec', windowSec.toString());
+        formData.append('overlap_ratio', overlapRatio);
+        formData.append('include_time_features', includeTime ? 'true' : 'false');
+        formData.append('include_freq_features', includeFreq ? 'true' : 'false');
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/extract-features`, {
+                method: 'POST',
+                body: formData,
+            });
+
+            const data = await resp.json();
+
+            if (!resp.ok) {
+                alert(`⚠️ Feature Extraction Failed: ${data.detail || 'Unknown error'}`);
+                return;
+            }
+
+            renderFeatResults(data);
+
+        } catch (err) {
+            alert(`⚠️ Feature Extraction Error: ${err.message}`);
+        } finally {
+            btnExtractFeatures.disabled = false;
+            btnExtractFeatures.textContent = '🧬 Extract EEG Features';
+        }
+    });
+}
+
+// ── Feature Engine: Reset ────────────────────────
+if (btnResetFeatures) {
+    btnResetFeatures.addEventListener('click', () => {
+        if (featWindowSlider)  { featWindowSlider.value  = '2.0'; featWindowSlider.dispatchEvent(new Event('input')); }
+        if (featOverlapSlider) { featOverlapSlider.value = '50';  featOverlapSlider.dispatchEvent(new Event('input')); }
+        const tCheck = document.getElementById('featIncludeTime');
+        const fCheck = document.getElementById('featIncludeFreq');
+        if (tCheck) tCheck.checked = true;
+        if (fCheck) fCheck.checked = true;
+        if (featResultsSection) featResultsSection.style.display = 'none';
+    });
+}
+
+// ── Feature Engine: Render Results ──────────────
+function renderFeatResults(data) {
+    if (!featResultsSection) return;
+    featResultsSection.style.display = 'block';
+
+    // Feature Matrix Banner
+    const shape = data.feature_matrix_shape || [0, 0];
+    const matrixShape = document.getElementById('featMatrixShape');
+    const matrixSub   = document.getElementById('featMatrixSub');
+    if (matrixShape) matrixShape.textContent = `(${shape[0]} × ${shape[1]})`;
+    if (matrixSub)   matrixSub.textContent   = `${shape[0]} epoch windows × ${shape[1]} features per epoch`;
+
+    // KPI Cards
+    const setKpi = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setKpi('featKpiEpochs',   data.n_epochs   ?? '—');
+    setKpi('featKpiFeatures', data.n_features  ?? '—');
+    setKpi('featKpiTime',     data.time_domain_count ?? '—');
+    setKpi('featKpiFreq',     data.freq_domain_count ?? '—');
+
+    // Alpha Validation Bars
+    renderAlphaBars(data.alpha_validation || {});
+
+    // Band Power Table
+    renderBandPowerTable(data.class_band_summary || {});
+
+    // Validation Badge
+    renderValidationBadge(data.alpha_validation || {});
+
+    // Feature Preview Table
+    renderFeaturePreview(data.sample_preview || [], data.feature_names || []);
+
+    // Scroll into view
+    featResultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Alpha Bars Renderer ──────────────────────────
+function renderAlphaBars(alphaValidation) {
+    const wrap = document.getElementById('alphaBarWrap');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+
+    const entries = Object.entries(alphaValidation);
+    if (entries.length === 0) {
+        wrap.innerHTML = '<p style="color:var(--text-muted);font-size:0.8rem;">No event class labels found in dataset.</p>';
+        return;
+    }
+
+    entries.forEach(([cls, val]) => {
+        const pct = (val * 100).toFixed(1);
+        const clsKey = cls.toLowerCase();
+        const fillClass = clsKey.includes('relax') ? 'relaxed'
+                        : clsKey.includes('task')  ? 'task'
+                        : clsKey.includes('active')? 'active'
+                        : 'default';
+
+        const row = document.createElement('div');
+        row.className = 'alpha-bar-row';
+        row.innerHTML = `
+            <div class="alpha-bar-label">
+                <span class="alpha-bar-class">🏷️ ${cls}</span>
+                <span class="alpha-bar-pct">${pct}% relative α</span>
+            </div>
+            <div class="alpha-bar-track">
+                <div class="alpha-bar-fill ${fillClass}" style="width: 0%;" data-target="${pct}"></div>
+            </div>`;
+        wrap.appendChild(row);
+
+        // Animate bar fill
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                const fill = row.querySelector('.alpha-bar-fill');
+                if (fill) fill.style.width = `${Math.min(pct, 100)}%`;
+            }, 100);
+        });
+    });
+}
+
+// ── Band Power Table Renderer ───────────────────
+function renderBandPowerTable(classBandSummary) {
+    const thead = document.querySelector('#bandPowerTable thead tr');
+    const tbody = document.getElementById('bandPowerTableBody');
+    if (!thead || !tbody) return;
+
+    const classes = Object.keys(classBandSummary);
+    const BAND_META = {
+        delta: { label: 'δ Delta', freq: '0.5–4 Hz' },
+        theta: { label: 'θ Theta', freq: '4–8 Hz' },
+        alpha: { label: 'α Alpha', freq: '8–13 Hz' },
+        beta:  { label: 'β Beta',  freq: '13–30 Hz' },
+        gamma: { label: 'γ Gamma', freq: '30–45 Hz' },
+    };
+
+    // Build header
+    thead.innerHTML = '<th>Band</th><th>Frequency</th>';
+    classes.forEach(cls => {
+        const th = document.createElement('th');
+        th.textContent = `🏷️ ${cls}`;
+        thead.appendChild(th);
+    });
+
+    // Build rows
+    tbody.innerHTML = '';
+    Object.entries(BAND_META).forEach(([band, meta]) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><span class="band-pill ${band}">${meta.label}</span></td>
+            <td style="color:var(--text-muted)">${meta.freq}</td>`;
+        classes.forEach(cls => {
+            const val = classBandSummary[cls]?.[band];
+            const td = document.createElement('td');
+            td.textContent = val !== undefined ? val.toFixed(4) : '—';
+            if (band === 'alpha') td.style.color = 'var(--cyan-light)';
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+    });
+}
+
+// ── Validation Badge Renderer ───────────────────
+function renderValidationBadge(alphaValidation) {
+    const badge = document.getElementById('alphaValidationResult');
+    const icon  = document.getElementById('validationIcon');
+    const title = document.getElementById('validationTitle');
+    const desc  = document.getElementById('validationDesc');
+    if (!badge) return;
+
+    const entries = Object.entries(alphaValidation);
+    if (entries.length < 2) {
+        badge.style.display = 'none';
+        return;
+    }
+
+    const values = entries.map(([, v]) => v);
+    const maxAlpha = Math.max(...values);
+    const minAlpha = Math.min(...values);
+    const maxCls   = entries.find(([, v]) => v === maxAlpha)?.[0] || '—';
+    const minCls   = entries.find(([, v]) => v === minAlpha)?.[0] || '—';
+    const ratio    = minAlpha > 0 ? (maxAlpha / minAlpha).toFixed(2) : '∞';
+    const isValid  = maxAlpha > minAlpha * 1.2; // >20% difference = confirmed ERD
+
+    badge.style.display = 'flex';
+    badge.classList.toggle('invalid', !isValid);
+
+    if (isValid) {
+        if (icon)  icon.textContent  = '✅';
+        if (title) title.textContent = 'Alpha ERD Confirmed (Milestone 2 ✓)';
+        if (desc)  desc.textContent  = `"${maxCls}" shows ${(maxAlpha * 100).toFixed(1)}% relative Alpha power vs "${minCls}" at ${(minAlpha * 100).toFixed(1)}% — a ${ratio}× suppression ratio. Feature extraction is physiologically valid.`;
+    } else {
+        if (icon)  icon.textContent  = '⚠️';
+        if (title) title.textContent = 'Alpha ERD Not Significant';
+        if (desc)  desc.textContent  = `Alpha power difference between event classes is less than 20%. Consider reviewing epoch parameters or data quality.`;
+    }
+}
+
+// ── Feature Preview Table Renderer ─────────────
+function renderFeaturePreview(samplePreview, featureNames) {
+    const thead = document.getElementById('featPreviewHead');
+    const tbody = document.getElementById('featPreviewBody');
+    if (!thead || !tbody || samplePreview.length === 0) return;
+
+    const cols = Object.keys(samplePreview[0]);
+
+    thead.innerHTML = '<tr>' + cols.map(c => `<th title="${c}">${c.length > 16 ? c.slice(0,14) + '…' : c}</th>`).join('') + '</tr>';
+    tbody.innerHTML = samplePreview.map((row, i) =>
+        '<tr>' + cols.map(col => {
+            const v = row[col];
+            return `<td>${typeof v === 'number' ? v.toFixed(4) : v}</td>`;
+        }).join('') + '</tr>'
+    ).join('');
+}
+
+// ── Hook into page navigation to check dataset ──
+document.addEventListener('DOMContentLoaded', () => {
+    const navFeatures = document.getElementById('nav-features');
+    if (navFeatures) {
+        navFeatures.addEventListener('click', () => {
+            setTimeout(featCheckDataset, 50);
+        });
+    }
+});

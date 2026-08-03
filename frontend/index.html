@@ -44,10 +44,10 @@
                     <span class="nav-label">Preprocessing</span>
                     <span class="nav-badge active-badge" id="badge-preprocess">Active</span>
                 </a>
-                <a href="#" class="nav-item" id="nav-epoching" data-page="page-epoching">
+                <a href="#" class="nav-item" id="nav-features" data-page="page-features">
                     <span class="nav-icon">📊</span>
-                    <span class="nav-label">Signal Epoching</span>
-                    <span class="nav-badge active-badge" id="badge-epoching">Active</span>
+                    <span class="nav-label">Feature Engine</span>
+                    <span class="nav-badge active-badge" id="badge-features">Active</span>
                 </a>
                 <a href="#" class="nav-item locked" id="nav-models">
                     <span class="nav-icon">🤖</span>
@@ -750,177 +750,184 @@ print("Ready! Shape:", df.shape)</pre>
 
             </div>
 
-            <!-- ══════════════════════════════════════════════════════════════ -->
-            <!-- PAGE 4: SIGNAL EPOCHING DASHBOARD (DAY 13)                    -->
-            <!-- ══════════════════════════════════════════════════════════════ -->
-            <div class="page-view" id="page-epoching" style="display: none;">
+            <!-- ══════════════════════════════
+                 PAGE: FEATURE ENGINE (Phase 2)
+                 Alpha Wave Validation & PSD Band Power Dashboard
+                 ══════════════════════════════ -->
+            <div class="page" id="page-features" style="display:none;">
+
+                <!-- Header -->
                 <div class="page-header">
                     <div>
-                        <h1 class="page-title">EEG Signal Epoching & Windowing</h1>
-                        <p class="page-subtitle">Segmentation of continuous multi-channel EEG signals into fixed-duration sliding time windows.</p>
-                    </div>
-                    <div class="header-badges">
-                        <span class="badge-pill version-pill">Phase 2 Engine</span>
-                        <span class="badge-pill status-pill">3D Matrix Builder</span>
+                        <h1 class="page-title">⚗️ Feature Engine &amp; Alpha Wave Validation</h1>
+                        <p class="page-subtitle">Extract time &amp; frequency domain features from epoched EEG. Validate Alpha wave suppression during cognitive tasks (Milestone 2).</p>
+                        <span class="phase-tag">🔬 Phase 2 Engine · PSD Band Power · Welch Method</span>
                     </div>
                 </div>
 
-                <!-- Active Dataset Banner -->
-                <div class="preprocess-banner" id="epochBanner">
-                    <div class="banner-icon">📁</div>
-                    <div class="banner-info">
-                        <h3 id="epochFileTitle">No Dataset Selected</h3>
-                        <p id="epochFileSub">Upload an EEG dataset in the Data Loader page or load a sample dataset first.</p>
-                    </div>
-                    <button class="browse-btn" id="loadEpochSampleBtn" style="padding: 8px 16px; font-size:13px;">
-                        Load Sample CSV
-                    </button>
+                <!-- No Dataset Banner -->
+                <div class="no-dataset-banner" id="featNoDataset">
+                    <span class="no-dataset-icon">📁</span>
+                    <span>No Dataset Selected — Upload an EEG dataset in the Data Loader page or load a sample dataset first.</span>
+                    <button class="btn-load-sample" id="featLoadSample">Load Sample CSV</button>
                 </div>
 
-                <!-- Epoch Controls Grid -->
-                <div class="filter-controls-grid">
-                    
-                    <!-- CARD 1: Window Duration -->
-                    <div class="filter-card">
-                        <div class="filter-card-header">
-                            <div class="filter-card-title">
-                                <span class="filter-icon">⏱️</span>
-                                <div>
-                                    <h3>Epoch Window Duration</h3>
-                                    <p>Length of each temporal segment in seconds.</p>
-                                </div>
+                <!-- Controls Row -->
+                <div class="controls-grid" id="featControls" style="display:none;">
+
+                    <!-- Window Size Card -->
+                    <div class="control-card">
+                        <div class="control-card-header">
+                            <div class="control-icon-wrap">⏱️</div>
+                            <div>
+                                <div class="control-title">Epoch Window Duration</div>
+                                <div class="control-desc">Length of each temporal segment in seconds.</div>
                             </div>
-                            <span class="val-badge" id="valWindowSec">2.0 s</span>
+                            <span class="control-value-badge" id="featWindowVal">2.0 s</span>
                         </div>
-                        <div class="filter-card-body">
-                            <div class="control-group">
-                                <div class="control-label-wrap">
-                                    <label for="inputWindowSec">Window Size (seconds):</label>
-                                </div>
-                                <input type="range" class="filter-range" id="inputWindowSec" min="0.5" max="5.0" step="0.1" value="2.0">
-                                <span class="range-hint">Determines temporal resolution per epoch (2.0 s = 500 samples @ 250 Hz).</span>
-                            </div>
-                        </div>
+                        <label class="slider-label">Window Size (seconds):</label>
+                        <input type="range" class="epoch-slider" id="featWindowSlider" min="0.5" max="5.0" step="0.5" value="2.0">
+                        <div class="slider-hint" id="featWindowHint">Determines temporal resolution per epoch.</div>
                     </div>
 
-                    <!-- CARD 2: Window Overlap Ratio -->
-                    <div class="filter-card">
-                        <div class="filter-card-header">
-                            <div class="filter-card-title">
-                                <span class="filter-icon">🔄</span>
-                                <div>
-                                    <h3>Sliding Overlap Ratio</h3>
-                                    <p>Percentage of overlap between consecutive windows.</p>
-                                </div>
+                    <!-- Overlap Ratio Card -->
+                    <div class="control-card">
+                        <div class="control-card-header">
+                            <div class="control-icon-wrap">🔁</div>
+                            <div>
+                                <div class="control-title">Sliding Overlap Ratio</div>
+                                <div class="control-desc">Percentage of overlap between consecutive windows.</div>
                             </div>
-                            <span class="val-badge" id="valOverlapPct">50 %</span>
+                            <span class="control-value-badge" id="featOverlapVal">50%</span>
                         </div>
-                        <div class="filter-card-body">
-                            <div class="control-group">
-                                <div class="control-label-wrap">
-                                    <label for="inputOverlapPct">Overlap Percentage (%):</label>
-                                </div>
-                                <input type="range" class="filter-range" id="inputOverlapPct" min="0" max="80" step="5" value="50">
-                                <span class="range-hint">50% overlap doubles total epoch count (Data Augmentation).</span>
-                            </div>
-                        </div>
+                        <label class="slider-label">Overlap Percentage (%):</label>
+                        <input type="range" class="epoch-slider" id="featOverlapSlider" min="0" max="80" step="10" value="50">
+                        <div class="slider-hint" id="featOverlapHint">50% overlap doubles total epoch count (Data Augmentation).</div>
                     </div>
 
-                    <!-- CARD 3: Computed Parameters -->
-                    <div class="filter-card">
-                        <div class="filter-card-header">
-                            <div class="filter-card-title">
-                                <span class="filter-icon">🧮</span>
-                                <div>
-                                    <h3>Computed Step Specs</h3>
-                                    <p>Live calculation of stride step and sample sizes.</p>
-                                </div>
+                    <!-- Feature Toggle Card -->
+                    <div class="control-card">
+                        <div class="control-card-header">
+                            <div class="control-icon-wrap">🧮</div>
+                            <div>
+                                <div class="control-title">Feature Selection</div>
+                                <div class="control-desc">Choose which feature domains to extract.</div>
                             </div>
-                            <span class="val-badge" id="valStepSec">1.0 s step</span>
                         </div>
-                        <div class="filter-card-body">
-                            <div class="detrend-info-box" style="flex-direction: column; gap: 8px;">
-                                <div><strong>Step Stride:</strong> <span id="calcStepSamples">250 samples (1.0 s)</span></div>
-                                <div><strong>Samples per Epoch:</strong> <span id="calcWinSamples">500 samples</span></div>
-                                <div><strong>Augmentation Factor:</strong> <span id="calcAugFactor">2.00x multiplier</span></div>
-                            </div>
+                        <div class="feat-toggle-row">
+                            <label class="feat-toggle">
+                                <input type="checkbox" id="featIncludeTime" checked>
+                                <span class="feat-toggle-label">⏰ Time Domain (7 features/ch)</span>
+                            </label>
+                            <label class="feat-toggle">
+                                <input type="checkbox" id="featIncludeFreq" checked>
+                                <span class="feat-toggle-label">📡 Frequency Domain — Welch PSD (11 features/ch)</span>
+                            </label>
                         </div>
                     </div>
 
                 </div>
 
-                <!-- Action Button Container -->
-                <div class="filter-actions-bar">
-                    <button class="browse-btn filter-btn-primary" id="runEpochBtn">
-                        <span class="btn-text">⚡ Generate EEG Epochs</span>
-                        <span class="btn-spinner" id="epochSpinner" style="display:none;">⏳</span>
-                    </button>
-                    <button class="secondary-btn" id="resetEpochBtn">
-                        ↺ Reset Parameters
-                    </button>
+                <!-- Run Button -->
+                <div class="epoch-actions" id="featActions" style="display:none;">
+                    <button class="btn-epoch" id="btnExtractFeatures">🧬 Extract EEG Features</button>
+                    <button class="btn-reset" id="btnResetFeatures">↺ Reset Parameters</button>
                 </div>
 
-                <!-- Epoch Results Container -->
-                <div class="results-container" id="epochResultsContainer" style="display:none; margin-top:32px;">
-                    <div class="results-header">
-                        <h2>Epoch Segmentation & 3D Tensor Dimensions</h2>
-                        <span class="timestamp-badge" id="epochTimestamp">Executed</span>
+                <!-- Results Section -->
+                <div id="featResultsSection" style="display:none;">
+
+                    <!-- Feature Matrix Banner -->
+                    <div class="tensor-banner">
+                        <div class="tensor-label">FEATURE MATRIX SHAPE (N_EPOCHS × N_FEATURES)</div>
+                        <div class="tensor-shape" id="featMatrixShape">— × —</div>
+                        <div class="tensor-sub" id="featMatrixSub">Awaiting extraction…</div>
                     </div>
 
-                    <!-- 3D Tensor Shape Callout Banner -->
-                    <div class="tensor-shape-banner" style="margin-bottom: 24px;">
-                        <div class="tensor-icon">📦</div>
-                        <div class="tensor-info">
-                            <span class="tensor-label">Output 3D Tensor Shape (N_epochs × N_channels × N_samples)</span>
-                            <h2 class="tensor-matrix-val" id="tensorShapeVal">(59 × 8 × 500)</h2>
-                            <p class="tensor-desc" id="tensorShapeDesc">59 total epoch windows generated across 8 EEG channels, with 500 samples per window.</p>
-                        </div>
-                    </div>
-
-                    <!-- Summary Stats Grid -->
-                    <div class="kpi-grid">
+                    <!-- KPI Row -->
+                    <div class="kpi-grid" id="featKpiGrid">
                         <div class="kpi-card">
-                            <span class="kpi-label">Total Epochs Created</span>
-                            <span class="kpi-value" id="kpiTotalEpochs">59</span>
-                            <span class="kpi-sub">Segmented temporal windows</span>
+                            <div class="kpi-label">TOTAL EPOCHS</div>
+                            <div class="kpi-value" id="featKpiEpochs">—</div>
+                            <div class="kpi-sub">Segmented windows</div>
                         </div>
                         <div class="kpi-card">
-                            <span class="kpi-label">Samples per Epoch</span>
-                            <span class="kpi-value" id="kpiSamplesPerEpoch">500</span>
-                            <span class="kpi-sub">2.0 s @ 250 Hz sampling</span>
+                            <div class="kpi-label">TOTAL FEATURES</div>
+                            <div class="kpi-value" id="featKpiFeatures">—</div>
+                            <div class="kpi-sub">Per epoch vector length</div>
                         </div>
                         <div class="kpi-card">
-                            <span class="kpi-label">Overlap Ratio</span>
-                            <span class="kpi-value" id="kpiOverlapRatio">50.0%</span>
-                            <span class="kpi-sub">1.0 s step stride</span>
+                            <div class="kpi-label">TIME DOMAIN</div>
+                            <div class="kpi-value" id="featKpiTime">—</div>
+                            <div class="kpi-sub">Statistical features</div>
                         </div>
                         <div class="kpi-card">
-                            <span class="kpi-label">Label Alignment</span>
-                            <span class="kpi-value highlight-val" id="kpiLabelAlignment">Majority</span>
-                            <span class="kpi-sub">Event class vote per window</span>
+                            <div class="kpi-label">FREQ DOMAIN</div>
+                            <div class="kpi-value" id="featKpiFreq">—</div>
+                            <div class="kpi-sub">Welch PSD band powers</div>
                         </div>
                     </div>
 
-                    <!-- Class & Subject Label Distribution -->
-                    <div class="detail-row">
-                        <div class="detail-card">
-                            <div class="detail-card-header">
-                                <span class="detail-icon">🏷️</span>
-                                <h4>Event Class Distribution per Epoch</h4>
-                            </div>
-                            <div class="pills-container" id="epochClassPills">
-                                <!-- Dynamic Event Pills -->
+                    <!-- Alpha Wave Validation Section -->
+                    <div class="alpha-validation-section">
+                        <div class="alpha-validation-header">
+                            <div>
+                                <h2 class="alpha-title">🧠 Alpha Wave (8-13 Hz) Validation — Milestone 2</h2>
+                                <p class="alpha-subtitle">Alpha power is suppressed during cognitive tasks (Event-Related Desynchronization). Relaxed (eyes-closed) epochs should show significantly higher relative Alpha power than Active/Task epochs.</p>
                             </div>
                         </div>
 
-                        <div class="detail-card">
-                            <div class="detail-card-header">
-                                <span class="detail-icon">👤</span>
-                                <h4>Subject Alignment Summary</h4>
+                        <!-- Alpha Bar Chart -->
+                        <div class="alpha-chart-grid">
+                            <div class="alpha-bar-card">
+                                <h3 class="band-card-title">Relative Alpha Power per Event Class</h3>
+                                <p class="band-card-sub">Higher α in Relaxed confirms physiological validity of extracted features.</p>
+                                <div class="alpha-bars-wrap" id="alphaBarWrap">
+                                    <!-- Dynamic alpha bars -->
+                                </div>
                             </div>
-                            <div class="info-table" id="epochSubjectInfo">
-                                <!-- Dynamic Subject Info -->
+
+                            <div class="alpha-bar-card">
+                                <h3 class="band-card-title">All EEG Band Powers per Class</h3>
+                                <p class="band-card-sub">Absolute mean power (µV²/Hz) per frequency band and event class.</p>
+                                <div class="band-table-wrap">
+                                    <table class="band-table" id="bandPowerTable">
+                                        <thead>
+                                            <tr>
+                                                <th>Band</th>
+                                                <th>Frequency</th>
+                                                <!-- Dynamic class columns -->
+                                            </tr>
+                                        </thead>
+                                        <tbody id="bandPowerTableBody">
+                                            <!-- Dynamic rows -->
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
+                        </div>
+
+                        <!-- Validation Result Badge -->
+                        <div class="validation-result" id="alphaValidationResult" style="display:none;">
+                            <span class="validation-icon" id="validationIcon">✅</span>
+                            <div>
+                                <div class="validation-title" id="validationTitle">Alpha ERD Confirmed</div>
+                                <div class="validation-desc" id="validationDesc">Relaxed Alpha power is significantly higher than Task Alpha power — feature extraction is physiologically valid.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Feature Preview Table -->
+                    <div class="table-card">
+                        <div class="table-card-header">
+                            <h3>Feature Matrix Preview (First 2 Epochs × First 5 Features)</h3>
+                            <span class="table-subtitle">Sample rows from the extracted 2D feature matrix ready for ML classification</span>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="metrics-table" id="featPreviewTable">
+                                <thead id="featPreviewHead"></thead>
+                                <tbody id="featPreviewBody"></tbody>
+                            </table>
                         </div>
                     </div>
 
