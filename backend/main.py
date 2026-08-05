@@ -17,6 +17,7 @@ from backend.utils.filters import (
 )
 from backend.utils.epoching import create_epochs_from_dataframe
 from backend.utils.features import extract_all_features
+from backend.utils.models import CLASSIFIERS, train_evaluate
 
 # Resolve the frontend directory relative to this file
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -573,3 +574,155 @@ async def extract_eeg_features(
             status_code=500,
             detail=f"Failed to execute feature extraction: {str(e)}"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENDPOINT: POST /api/train-model
+# Phase 3 — Train SVM / Random Forest / XGBoost on extracted EEG feature matrix
+# ══════════════════════════════════════════════════════════════════════════════
+@app.post("/api/train-model")
+async def train_model_endpoint(
+    file: UploadFile = File(..., description="EEG dataset CSV file (with event_label column)"),
+    model_name: str  = Form("svm",  description="Classifier: 'svm' | 'random_forest' | 'xgboost'"),
+    window_size_sec: float = Form(2.0, description="Epoch window size in seconds"),
+    overlap_ratio:   float = Form(0.5, description="Sliding window overlap ratio [0, 1)"),
+    test_size:       float = Form(0.2, description="Test split fraction [0.1, 0.5]"),
+    random_state:    int   = Form(42,  description="Random seed for reproducibility"),
+):
+    """
+    Full ML pipeline in one API call:
+      CSV upload → epoch segmentation → feature extraction → model training → evaluation metrics.
+
+    Returns:
+    --------
+    JSON with accuracy, precision, recall, F1, confusion matrix, classification report,
+    train/test sample counts, and per-model metadata.
+    """
+    # ── Parameter validation ──────────────────────────────────────────────────
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are accepted.")
+
+    if model_name not in CLASSIFIERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown model '{model_name}'. Choose from: {CLASSIFIERS}"
+        )
+
+    if not (0.1 <= test_size <= 0.5):
+        raise HTTPException(status_code=400, detail="test_size must be between 0.1 and 0.5.")
+
+    if window_size_sec <= 0:
+        raise HTTPException(status_code=400, detail="window_size_sec must be greater than 0.")
+
+    if not (0.0 <= overlap_ratio < 1.0):
+        raise HTTPException(status_code=400, detail="overlap_ratio must be in [0.0, 1.0).")
+
+    temp_file_path = None
+    try:
+        # ── Save uploaded CSV to temp file ─────────────────────────────────
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+            content = await file.read()
+            tmp.write(content)
+            temp_file_path = tmp.name
+
+        # ── Load & validate EEG data ────────────────────────────────────────
+        loader = EEGDataLoader(temp_file_path)
+        df, metadata = loader.load_and_validate()
+
+        sampling_rate = metadata.get("sampling_rate_hz", metadata.get("sampling_rate", 250))
+        eeg_channels  = metadata.get("channels", metadata.get("eeg_channels", []))
+
+        if not eeg_channels:
+            raise HTTPException(status_code=400, detail="No EEG channels found in the uploaded CSV.")
+
+        # ── Epoch segmentation ──────────────────────────────────────────────
+        epoch_result = create_epochs_from_dataframe(
+            df=df,
+            channels=eeg_channels,
+            fs=sampling_rate,
+            window_size_sec=window_size_sec,
+            overlap_ratio=overlap_ratio,
+        )
+
+        epochs_array = epoch_result["epochs"]    # shape: (n_epochs, n_channels, samples)
+        labels_list  = epoch_result.get("labels", None)
+        n_epochs     = epoch_result["n_epochs"]
+
+        if n_epochs == 0:
+            raise HTTPException(status_code=400, detail="No epochs could be created. Check window_size_sec and data length.")
+
+        feature_df = extract_all_features(
+            epochs=epochs_array,
+            fs=sampling_rate,
+            channel_names=eeg_channels,
+            labels=labels_list,
+        )
+        feature_names = [c for c in feature_df.columns if c not in ("event", "event_label", "subject_id", "subject")]
+
+        # ── Prepare X (features) and y (labels) ─────────────────────────────
+        # extract_all_features stores labels in 'event' column
+        label_col = "event" if "event" in feature_df.columns else "event_label"
+        if label_col not in feature_df.columns:
+            if labels_list is not None:
+                feature_df["event"] = labels_list
+                label_col = "event"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No event label column found. The CSV must contain an event_label column."
+                )
+
+        X = feature_df[feature_names].values.astype(np.float32)
+        y = feature_df[label_col].values
+
+        unique_classes = np.unique(y)
+        if len(unique_classes) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At least 2 event classes required. Found: {unique_classes.tolist()}"
+            )
+
+        # ── Train & evaluate ─────────────────────────────────────────────────
+        metrics = train_evaluate(
+            X=X,
+            y=y,
+            model_name=model_name,
+            test_size=test_size,
+            random_state=random_state,
+            class_names=[str(c) for c in unique_classes],
+        )
+
+        return JSONResponse(content={
+            "success":        True,
+            "message":        f"{model_name.upper()} trained and evaluated successfully.",
+            "model_name":     metrics["model_name"],
+            "accuracy":       metrics["accuracy"],
+            "precision_macro":metrics["precision_macro"],
+            "recall_macro":   metrics["recall_macro"],
+            "f1_macro":       metrics["f1_macro"],
+            "f1_weighted":    metrics["f1_weighted"],
+            "confusion_matrix":       metrics["confusion_matrix"],
+            "classification_report":  metrics["classification_report"],
+            "train_samples":  metrics["train_samples"],
+            "test_samples":   metrics["test_samples"],
+            "n_classes":      metrics["n_classes"],
+            "class_names":    [str(c) for c in unique_classes],
+            "feature_matrix_shape": list(X.shape),
+            "epoch_info": {
+                "n_epochs":        n_epochs,
+                "window_size_sec": window_size_sec,
+                "overlap_ratio":   overlap_ratio,
+                "sampling_rate":   sampling_rate,
+            },
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Model training failed: {str(e)}"
+        )
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
