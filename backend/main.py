@@ -17,7 +17,7 @@ from backend.utils.filters import (
 )
 from backend.utils.epoching import create_epochs_from_dataframe
 from backend.utils.features import extract_all_features
-from backend.utils.models import CLASSIFIERS, train_evaluate
+from backend.utils.models import CLASSIFIERS, train_evaluate, cross_validate_model
 
 # Resolve the frontend directory relative to this file
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -726,3 +726,169 @@ async def train_model_endpoint(
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENDPOINT: POST /api/cross-validate
+# Phase 3 — Group K-Fold Cross-Validation (Subject-Independent Evaluation)
+# ══════════════════════════════════════════════════════════════════════════════
+@app.post("/api/cross-validate")
+async def cross_validate_endpoint(
+    file: UploadFile = File(..., description="EEG dataset CSV file (with event_label and subject_id columns)"),
+    model_name: str  = Form("svm",  description="Classifier: 'svm' | 'random_forest' | 'xgboost'"),
+    window_size_sec: float = Form(2.0, description="Epoch window size in seconds"),
+    overlap_ratio:   float = Form(0.5, description="Sliding window overlap ratio [0, 1)"),
+    n_splits:        int   = Form(5,   description="Number of folds (partitions)"),
+    random_state:    int   = Form(42,  description="Random seed for model reproducibility"),
+):
+    """
+    Perform Group K-Fold Cross-Validation on the uploaded EEG dataset.
+
+    Groups epochs by subject_id (from the CSV dataset) to partition train/test sets,
+    preventing subject-level data leakage. Capping n_splits automatically if n_splits
+    exceeds unique subjects.
+    """
+    # ── Parameter validation ──────────────────────────────────────────────────
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are accepted.")
+
+    if model_name not in CLASSIFIERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown model '{model_name}'. Choose from: {CLASSIFIERS}"
+        )
+
+    if window_size_sec <= 0:
+        raise HTTPException(status_code=400, detail="window_size_sec must be greater than 0.")
+
+    if not (0.0 <= overlap_ratio < 1.0):
+        raise HTTPException(status_code=400, detail="overlap_ratio must be in [0.0, 1.0).")
+
+    if n_splits < 2:
+        raise HTTPException(status_code=400, detail="n_splits must be at least 2.")
+
+    temp_file_path = None
+    try:
+        # ── Save uploaded CSV to temp file ─────────────────────────────────
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+            content = await file.read()
+            tmp.write(content)
+            temp_file_path = tmp.name
+
+        # ── Load & validate EEG data ────────────────────────────────────────
+        loader = EEGDataLoader(temp_file_path)
+        df, metadata = loader.load_and_validate()
+
+        # Check if subject_id column exists
+        if "subject_id" not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail="Column 'subject_id' not found in dataset. Group K-Fold cross-validation requires a 'subject_id' column to partition train/test splits without leakage."
+            )
+
+        sampling_rate = metadata.get("sampling_rate_hz", metadata.get("sampling_rate", 250))
+        eeg_channels  = metadata.get("channels", metadata.get("eeg_channels", []))
+
+        if not eeg_channels:
+            raise HTTPException(status_code=400, detail="No EEG channels found in the uploaded CSV.")
+
+        # ── Epoch segmentation ──────────────────────────────────────────────
+        epoch_result = create_epochs_from_dataframe(
+            df=df,
+            channels=eeg_channels,
+            fs=sampling_rate,
+            window_size_sec=window_size_sec,
+            overlap_ratio=overlap_ratio,
+        )
+
+        epochs_array = epoch_result["epochs"]    # shape: (n_epochs, n_channels, samples)
+        labels_list  = epoch_result.get("labels", None)
+        subjects_list = epoch_result.get("subjects", None)
+        n_epochs     = epoch_result["n_epochs"]
+
+        if n_epochs == 0:
+            raise HTTPException(status_code=400, detail="No epochs could be created. Check window_size_sec and data length.")
+
+        if subjects_list is None or len(subjects_list) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Failed to extract subject groupings from epochs. Check 'subject_id' values."
+            )
+
+        # ── Feature extraction ──────────────────────────────────────────────
+        feature_df = extract_all_features(
+            epochs=epochs_array,
+            fs=sampling_rate,
+            channel_names=eeg_channels,
+            labels=labels_list,
+        )
+        feature_names = [c for c in feature_df.columns if c not in ("event", "event_label", "subject_id", "subject")]
+
+        # ── Prepare X (features) and y (labels) ─────────────────────────────
+        label_col = "event" if "event" in feature_df.columns else "event_label"
+        if label_col not in feature_df.columns:
+            if labels_list is not None:
+                feature_df["event"] = labels_list
+                label_col = "event"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No event label column found. The CSV must contain an event_label column."
+                )
+
+        X = feature_df[feature_names].values.astype(np.float32)
+        y = feature_df[label_col].values
+
+        unique_classes = np.unique(y)
+        if len(unique_classes) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At least 2 event classes required. Found: {unique_classes.tolist()}"
+            )
+
+        # ── Run Group K-Fold Cross-Validation ───────────────────────────────
+        cv_results = cross_validate_model(
+            X=X,
+            y=y,
+            groups=np.array(subjects_list),
+            model_name=model_name,
+            n_splits=n_splits,
+            random_state=random_state,
+            class_names=[str(c) for c in unique_classes],
+        )
+
+        return JSONResponse(content={
+            "success":                      True,
+            "message":                      f"Group K-Fold Cross-Validation for {model_name.upper()} completed.",
+            "model_name":                   cv_results["model_name"],
+            "n_splits":                     cv_results["n_splits"],
+            "mean_accuracy":                cv_results["mean_accuracy"],
+            "std_accuracy":                 cv_results["std_accuracy"],
+            "mean_precision_macro":         cv_results["mean_precision_macro"],
+            "mean_recall_macro":            cv_results["mean_recall_macro"],
+            "mean_f1_macro":                cv_results["mean_f1_macro"],
+            "accumulated_confusion_matrix": cv_results["accumulated_confusion_matrix"],
+            "folds":                        cv_results["folds"],
+            "n_samples":                    cv_results["n_samples"],
+            "n_classes":                    cv_results["n_classes"],
+            "class_names":                  cv_results["class_names"],
+            "feature_matrix_shape":         list(X.shape),
+            "epoch_info": {
+                "n_epochs":        n_epochs,
+                "window_size_sec": window_size_sec,
+                "overlap_ratio":   overlap_ratio,
+                "sampling_rate":   sampling_rate,
+            },
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cross-validation pipeline failed: {str(e)}"
+        )
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+

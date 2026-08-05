@@ -32,6 +32,7 @@ from backend.utils.models import (
     evaluate_model,
     train_evaluate,
     train_model,
+    cross_validate_model,
 )
 
 # ── Shared synthetic dataset ────────────────────────────────────────────────
@@ -193,3 +194,97 @@ def test_train_evaluate_string_labels():
     metrics = train_evaluate(X_SYNTH, y_str, model_name="random_forest", random_state=42)
     assert 0.0 <= metrics["accuracy"] <= 1.0
     assert metrics["n_classes"] == 2
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEST 13: cross_validate_model end-to-end for all classifiers
+# ══════════════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("model", ["svm", "random_forest", "xgboost"])
+def test_cross_validate_classifiers_end_to_end(model):
+    """cross_validate_model must run GroupKFold cross-validation for all classifiers."""
+    # Create 5 synthetic subjects distributed across the samples
+    groups = np.repeat([f"Sub_{i}" for i in range(5)], N_SAMPLES // 5)
+    
+    cv_results = cross_validate_model(
+        X=X_SYNTH,
+        y=Y_SYNTH,
+        groups=groups,
+        model_name=model,
+        n_splits=5,
+        random_state=42,
+    )
+    
+    assert cv_results["model_name"] == model
+    assert cv_results["n_splits"] == 5
+    assert 0.0 <= cv_results["mean_accuracy"] <= 1.0
+    assert len(cv_results["folds"]) == 5
+    assert cv_results["n_samples"] == N_SAMPLES
+    
+    # Check shape of accumulated confusion matrix
+    cm = cv_results["accumulated_confusion_matrix"]
+    assert len(cm) == cv_results["n_classes"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEST 14: GroupKFold subject isolation (Prevent Data Leakage)
+# ══════════════════════════════════════════════════════════════════════════════
+def test_cross_validate_subject_isolation():
+    """Subjects in train and test folds must be completely disjoint."""
+    groups = np.repeat([f"Sub_{i}" for i in range(4)], N_SAMPLES // 4)
+    
+    cv_results = cross_validate_model(
+        X=X_SYNTH,
+        y=Y_SYNTH,
+        groups=groups,
+        model_name="svm",
+        n_splits=4,
+    )
+    
+    for fold in cv_results["folds"]:
+        train_subs = set(fold["train_subjects"])
+        test_subs  = set(fold["test_subjects"])
+        
+        # Train and test subject sets must have ZERO intersection
+        intersection = train_subs.intersection(test_subs)
+        assert len(intersection) == 0, f"Subject leakage detected in fold {fold['fold_index']}: {intersection}"
+        
+        # Test fold must contain exactly 1 subject (since n_splits=4 and unique_groups=4)
+        assert len(test_subs) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEST 15: n_splits automatic capping
+# ══════════════════════════════════════════════════════════════════════════════
+def test_cross_validate_n_splits_capping():
+    """n_splits must be capped at the number of unique groups if n_splits is larger."""
+    # Only 3 unique subjects
+    groups = np.repeat(["Sub_A", "Sub_B", "Sub_C"], [30, 30, 40])
+    
+    cv_results = cross_validate_model(
+        X=X_SYNTH,
+        y=Y_SYNTH,
+        groups=groups,
+        model_name="random_forest",
+        n_splits=10, # Requesting 10 splits, but only 3 subjects exist
+    )
+    
+    # Must cap to 3 splits
+    assert cv_results["n_splits"] == 3
+    assert len(cv_results["folds"]) == 3
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TEST 16: ValueError raised for single group
+# ══════════════════════════════════════════════════════════════════════════════
+def test_cross_validate_single_group_raises():
+    """cross_validate_model must raise ValueError if only 1 unique group is provided."""
+    groups = np.repeat(["Single_Sub"], N_SAMPLES)
+    
+    with pytest.raises(ValueError, match="GroupKFold requires at least 2 unique groups"):
+        cross_validate_model(
+            X=X_SYNTH,
+            y=Y_SYNTH,
+            groups=groups,
+            model_name="svm",
+        )
+

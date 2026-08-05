@@ -38,7 +38,7 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GroupKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.svm import SVC
@@ -358,3 +358,154 @@ def train_evaluate(
     metrics["test_samples"]  = int(len(X_test))
 
     return metrics
+
+
+def cross_validate_model(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: np.ndarray,
+    model_name: ModelName = "svm",
+    n_splits: int = 5,
+    random_state: int = 42,
+    class_names: Optional[List[str]] = None,
+    **model_kwargs: Any,
+) -> Dict[str, Any]:
+    """
+    Perform Group K-Fold Cross-Validation on the dataset.
+
+    Groups (subjects) are guaranteed to be isolated between train and test
+    folds, preventing subject-level data leakage.
+
+    Parameters
+    ----------
+    X : np.ndarray, shape (n_samples, n_features)
+        EEG feature matrix.
+    y : np.ndarray, shape (n_samples,)
+        Class labels (int or str).
+    groups : np.ndarray, shape (n_samples,)
+        Subject IDs/names to partition groups (denekler).
+    model_name : {"svm", "random_forest", "xgboost"}
+        Which classifier pipeline to run.
+    n_splits : int
+        Number of GroupKFold partitions. Automatically capped to the number
+        of unique groups.
+    random_state : int
+        Seed for model reproducibility.
+    class_names : list[str] | None
+        Human-readable labels for confusion matrix and report.
+    **model_kwargs
+        Extra arguments forwarded to model builders.
+
+    Returns
+    -------
+    dict
+        Detailed cross-validation stats containing:
+        {
+            "model_name": str,
+            "n_splits": int,
+            "mean_accuracy": float,
+            "std_accuracy": float,
+            "mean_f1_macro": float,
+            "mean_precision_macro": float,
+            "mean_recall_macro": float,
+            "folds": list[dict], # list of metrics for each fold
+            "accumulated_confusion_matrix": list[list[int]],
+            "class_names": list[str],
+            "n_samples": int,
+        }
+    """
+    if model_name not in CLASSIFIERS:
+        raise ValueError(
+            f"Unknown model '{model_name}'. "
+            f"Choose from: {CLASSIFIERS}"
+        )
+
+    # Encode string labels → integers
+    le = LabelEncoder()
+    y_enc = le.fit_transform(y)
+    if class_names is None:
+        class_names = [str(c) for c in le.classes_]
+
+    # Convert groups to numpy array
+    groups = np.array(groups)
+    unique_groups = np.unique(groups)
+    num_unique_groups = len(unique_groups)
+
+    if num_unique_groups < 2:
+        raise ValueError(
+            f"GroupKFold requires at least 2 unique groups (subjects). "
+            f"Found only {num_unique_groups}: {unique_groups.tolist()}"
+        )
+
+    # Cap n_splits if there are fewer unique subjects than splits
+    actual_splits = min(n_splits, num_unique_groups)
+
+    gkf = GroupKFold(n_splits=actual_splits)
+    builders = {
+        "svm":           build_svm,
+        "random_forest": build_random_forest,
+        "xgboost":       build_xgboost,
+    }
+
+    fold_metrics_list = []
+    accuracies = []
+    f1_macros = []
+    precisions = []
+    recalls = []
+
+    # Initialize accumulated confusion matrix (shape: n_classes x n_classes)
+    n_classes = len(class_names)
+    accum_cm = np.zeros((n_classes, n_classes), dtype=int)
+
+    for i, (train_idx, test_idx) in enumerate(gkf.split(X, y_enc, groups=groups)):
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y_enc[train_idx], y_enc[test_idx]
+        groups_train, groups_test = groups[train_idx], groups[test_idx]
+
+        # Build & train fresh model pipeline
+        pipeline = builders[model_name](random_state=random_state, **model_kwargs)
+        trained_pipeline = train_model(pipeline, X_train, y_train)
+
+        # Evaluate on test fold
+        fold_metrics = evaluate_model(
+            trained_pipeline, X_test, y_test, class_names=class_names
+        )
+
+        # Update lists and accumulated confusion matrix
+        accuracies.append(fold_metrics["accuracy"])
+        f1_macros.append(fold_metrics["f1_macro"])
+        precisions.append(fold_metrics["precision_macro"])
+        recalls.append(fold_metrics["recall_macro"])
+
+        fold_cm = np.array(fold_metrics["confusion_matrix"])
+        accum_cm += fold_cm
+
+        fold_metrics_list.append({
+            "fold_index":       int(i + 1),
+            "accuracy":         fold_metrics["accuracy"],
+            "precision_macro":  fold_metrics["precision_macro"],
+            "recall_macro":     fold_metrics["recall_macro"],
+            "f1_macro":         fold_metrics["f1_macro"],
+            "f1_weighted":      fold_metrics["f1_weighted"],
+            "confusion_matrix": fold_metrics["confusion_matrix"],
+            "train_samples":    int(len(X_train)),
+            "test_samples":     int(len(X_test)),
+            "train_subjects":   [str(g) for g in np.unique(groups_train)],
+            "test_subjects":    [str(g) for g in np.unique(groups_test)],
+        })
+
+    return {
+        "model_name":                   model_name,
+        "n_splits":                     actual_splits,
+        "mean_accuracy":                round(float(np.mean(accuracies)), 6),
+        "std_accuracy":                 round(float(np.std(accuracies)), 6),
+        "mean_precision_macro":         round(float(np.mean(precisions)), 6),
+        "mean_recall_macro":            round(float(np.mean(recalls)), 6),
+        "mean_f1_macro":                round(float(np.mean(f1_macros)), 6),
+        "folds":                        fold_metrics_list,
+        "accumulated_confusion_matrix": accum_cm.tolist(),
+        "n_samples":                    int(len(X)),
+        "n_classes":                    int(n_classes),
+        "class_names":                  class_names,
+    }
+
