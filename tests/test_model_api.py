@@ -91,6 +91,8 @@ def test_train_model_svm_default_returns_200():
     assert "f1_macro" in data
     assert "confusion_matrix" in data
     assert "classification_report" in data
+    assert "roc_auc" in data
+    assert "roc_curves" in data
     assert data["train_samples"] + data["test_samples"] == 59 # 59 epochs in sample data
     assert data["feature_matrix_shape"] == [59, 144]
 
@@ -172,6 +174,8 @@ def test_cross_validate_svm_returns_200():
     assert 0.0 <= data["mean_accuracy"] <= 1.0
     assert "std_accuracy" in data
     assert "mean_f1_macro" in data
+    assert 0.0 <= data["mean_roc_auc"] <= 1.0
+    assert "std_roc_auc" in data
     assert "accumulated_confusion_matrix" in data
     assert len(data["folds"]) == 3
     assert data["n_samples"] == 59
@@ -181,6 +185,8 @@ def test_cross_validate_svm_returns_200():
     assert fold["fold_index"] == 1
     assert "train_subjects" in fold
     assert "test_subjects" in fold
+    assert "roc_auc" in fold
+    assert "roc_curves" in fold
     assert fold["train_samples"] + fold["test_samples"] == 59
 
 
