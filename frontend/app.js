@@ -10,6 +10,7 @@ const API_BASE = 'http://127.0.0.1:8000';
 // Global state
 let currentUploadedFile = null;
 let lastMetadata        = null;
+let lastFeatureState    = null;  // Stores extracted feature CSV + metadata for ML Models page
 
 // ── DOM Elements ────────────────────────────────
 const dropZone       = document.getElementById('dropZone');
@@ -68,9 +69,15 @@ const filterTableBody          = document.getElementById('filterTableBody');
 // PAGE ROUTER (Data Loader ↔ Guidelines ↔ Preprocessing)
 // ════════════════════════════════════════════════
 function showPage(pageId) {
-    document.querySelectorAll('.page-view').forEach(p => p.style.display = 'none');
+    document.querySelectorAll('.page-view, .page').forEach(p => {
+        p.style.display = 'none';
+        p.classList.add('hidden');
+    });
     const targetPage = document.getElementById(pageId);
-    if (targetPage) targetPage.style.display = 'block';
+    if (targetPage) {
+        targetPage.style.display = 'block';
+        targetPage.classList.remove('hidden');
+    }
 
     document.querySelectorAll('.nav-item[data-page]').forEach(a => {
         a.classList.remove('active');
@@ -86,6 +93,10 @@ document.querySelectorAll('.nav-item[data-page]').forEach(link => {
     link.addEventListener('click', e => {
         e.preventDefault();
         showPage(link.dataset.page);
+        // Auto-fill ML Models page from previous feature extraction step
+        if (link.dataset.page === 'page-models') {
+            setTimeout(updateMLPageFeatureState, 50);
+        }
     });
 });
 
@@ -886,6 +897,18 @@ if (btnExtractFeatures) {
 
             renderFeatResults(data);
 
+            // ── Save feature state globally for ML Models page ──
+            if (data.feature_csv) {
+                lastFeatureState = {
+                    csvString:    data.feature_csv,
+                    labelCol:     data.label_col || 'event',
+                    nEpochs:      data.n_epochs,
+                    nFeatures:    data.n_features,
+                    epochInfo:    data.epoch_info || {},
+                };
+                updateMLPageFeatureState();
+            }
+
         } catch (err) {
             alert(`⚠️ Feature Extraction Error: ${err.message}`);
         } finally {
@@ -1088,3 +1111,416 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+/* ════════════════════════════════════════════════
+   ML MODELS PAGE — JavaScript
+   ════════════════════════════════════════════════ */
+
+// ── State ──
+let mlUploadedFile    = null;
+let selectedModel     = 'svm';
+let rocChartInstance  = null;
+let cvFoldChartInst   = null;
+
+// ── DOM Refs ──
+const modelDropZone    = document.getElementById('modelDropZone');
+const modelFileInput   = document.getElementById('modelFileInput');
+const modelFileInfo    = document.getElementById('modelFileInfo');
+const modelFileName    = document.getElementById('modelFileName');
+const trainModelBtn    = document.getElementById('trainModelBtn');
+const crossValidateBtn = document.getElementById('crossValidateBtn');
+
+// ── File drop zone ──
+if (modelDropZone) {
+    modelDropZone.addEventListener('click', () => modelFileInput && modelFileInput.click());
+    modelDropZone.addEventListener('dragover', e => { e.preventDefault(); modelDropZone.classList.add('drag-over'); });
+    modelDropZone.addEventListener('dragleave', () => modelDropZone.classList.remove('drag-over'));
+    modelDropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        modelDropZone.classList.remove('drag-over');
+        const file = e.dataTransfer.files[0];
+        if (file) setMLFile(file);
+    });
+}
+if (modelFileInput) {
+    modelFileInput.addEventListener('change', () => {
+        if (modelFileInput.files[0]) setMLFile(modelFileInput.files[0]);
+    });
+}
+
+// ── Auto-fill ML Models page from Feature Engine state ──
+function updateMLPageFeatureState() {
+    if (!lastFeatureState) return;
+
+    const { csvString, labelCol, nEpochs, nFeatures, epochInfo } = lastFeatureState;
+
+    // Create a File-like Blob from the CSV string
+    const blob = new Blob([csvString], { type: 'text/csv' });
+    const file = new File([blob], 'features_from_pipeline.csv', { type: 'text/csv' });
+    mlUploadedFile = file;
+
+    // Update UI to show auto-loaded state
+    if (modelFileName) modelFileName.textContent = `features_from_pipeline.csv (${nEpochs} epochs × ${nFeatures} features)`;
+    if (modelFileInfo) {
+        modelFileInfo.style.display = 'flex';
+        modelFileInfo.style.background = 'rgba(56, 189, 248, 0.1)';
+        modelFileInfo.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+        modelFileInfo.style.color = '#38bdf8';
+        // Change badge icon
+        const badge = modelFileInfo.querySelector('.file-badge');
+        if (badge) badge.textContent = '🔗';
+    }
+    if (modelDropZone) {
+        modelDropZone.style.opacity = '0.5';
+        modelDropZone.style.pointerEvents = 'none';
+    }
+    if (trainModelBtn) trainModelBtn.disabled = false;
+    if (crossValidateBtn) crossValidateBtn.disabled = false;
+
+    // Pre-fill label col
+    const labelColInput = document.getElementById('mlLabelCol');
+    if (labelColInput) labelColInput.value = labelCol;
+
+    // Pre-fill epoch params if available
+    if (epochInfo.fs) {
+        const srInput = document.getElementById('mlSamplingRate');
+        if (srInput) srInput.value = Math.round(epochInfo.fs);
+    }
+    if (epochInfo.window_size_sec) {
+        const wsInput = document.getElementById('mlWindowSize');
+        if (wsInput) wsInput.value = epochInfo.window_size_sec;
+    }
+    if (epochInfo.overlap_ratio !== undefined) {
+        const olInput = document.getElementById('mlOverlap');
+        if (olInput) olInput.value = epochInfo.overlap_ratio;
+    }
+}
+
+function setMLFile(file) {
+    if (!file.name.endsWith('.csv')) {
+        alert('Please upload a CSV file.');
+        return;
+
+    }
+    mlUploadedFile = file;
+    modelFileName.textContent = file.name;
+    modelFileInfo.style.display = 'flex';
+    trainModelBtn.disabled = false;
+    crossValidateBtn.disabled = false;
+}
+
+// ── Model selector buttons ──
+document.querySelectorAll('.model-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedModel = btn.dataset.model;
+    });
+});
+
+// ── Helper: set KPI card value + animate bar ──
+function setKPI(valueId, barId, value, color) {
+    const el  = document.getElementById(valueId);
+    const bar = document.getElementById(barId);
+    if (el)  el.textContent = (value * 100).toFixed(1) + '%';
+    if (bar) { bar.style.width = '0%'; setTimeout(() => { bar.style.width = (value * 100) + '%'; }, 60); }
+}
+
+// ── ROC Curve Chart ──
+function renderROCChart(rocCurves) {
+    const ctx = document.getElementById('rocChart');
+    if (!ctx) return;
+    if (rocChartInstance) { rocChartInstance.destroy(); rocChartInstance = null; }
+
+    const COLORS = ['#38bdf8', '#818cf8', '#34d399', '#f59e0b', '#f87171', '#c084fc'];
+    const datasets = [];
+
+    // Diagonal reference line
+    datasets.push({
+        label: 'Random Classifier',
+        data: [{x:0,y:0},{x:1,y:1}],
+        borderColor: 'rgba(255,255,255,0.2)',
+        borderDash: [5,5],
+        borderWidth: 1,
+        pointRadius: 0,
+        showLine: true,
+        fill: false,
+    });
+
+    Object.entries(rocCurves).forEach(([cls, curve], i) => {
+        const color = COLORS[i % COLORS.length];
+        const pts = curve.fpr.map((x, j) => ({ x, y: curve.tpr[j] }));
+        datasets.push({
+            label: `${cls} (AUC=${curve.auc.toFixed(3)})`,
+            data: pts,
+            borderColor: color,
+            backgroundColor: color + '18',
+            borderWidth: 2.5,
+            pointRadius: 0,
+            showLine: true,
+            fill: false,
+            tension: 0.3,
+        });
+    });
+
+    rocChartInstance = new Chart(ctx, {
+        type: 'scatter',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 600 },
+            plugins: {
+                legend: { labels: { color: '#94a3b8', font: { family: 'Outfit', size: 11 }, boxWidth: 18 } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const p = ctx.parsed;
+                            return `${ctx.dataset.label.split(' (')[0]} — FPR: ${p.x.toFixed(3)}, TPR: ${p.y.toFixed(3)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { type: 'linear', min: 0, max: 1, title: { display: true, text: 'False Positive Rate', color: '#64748b', font: { family: 'Outfit' } }, ticks: { color: '#475569', maxTicksLimit: 6 }, grid: { color: 'rgba(255,255,255,0.04)' } },
+                y: { min: 0, max: 1, title: { display: true, text: 'True Positive Rate', color: '#64748b', font: { family: 'Outfit' } }, ticks: { color: '#475569', maxTicksLimit: 6 }, grid: { color: 'rgba(255,255,255,0.04)' } },
+            },
+        },
+    });
+}
+
+// ── Confusion Matrix ──
+function renderConfusionMatrix(matrix, classNames) {
+    const wrap = document.getElementById('confusionMatrixWrap');
+    if (!wrap) return;
+    const maxVal = Math.max(...matrix.flat().filter(v => typeof v === 'number'));
+
+    let html = '<table class="cm-table"><thead><tr><th></th>';
+    classNames.forEach(c => { html += `<th>Pred:<br>${c}</th>`; });
+    html += '</tr></thead><tbody>';
+
+    matrix.forEach((row, i) => {
+        html += `<tr><td class="cm-row-label">Act: ${classNames[i]}</td>`;
+        row.forEach((val, j) => {
+            const alpha = maxVal > 0 ? 0.1 + 0.85 * (val / maxVal) : 0.1;
+            const isDiag = i === j;
+            const bg  = isDiag
+                ? `rgba(52, 211, 153, ${alpha})`
+                : `rgba(248, 113, 113, ${alpha * 0.6})`;
+            const fg  = isDiag ? '#34d399' : '#f87171';
+            html += `<td style="background:${bg};color:${fg};">${val}</td>`;
+        });
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+}
+
+// ── Per-class report table ──
+function renderClassReport(report, rocCurves, classNames) {
+    const tbody = document.getElementById('classReportBody');
+    const badge = document.getElementById('modelReportBadge');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    classNames.forEach(cls => {
+        if (!report[cls]) return;
+        const r   = report[cls];
+        const auc = rocCurves && rocCurves[cls] ? rocCurves[cls].auc.toFixed(3) : '—';
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><span style="font-weight:700;color:#7dd3fc;">${cls}</span></td>
+            <td>${(r.precision * 100).toFixed(1)}%</td>
+            <td>${(r.recall * 100).toFixed(1)}%</td>
+            <td>${(r['f1-score'] * 100).toFixed(1)}%</td>
+            <td>${r.support}</td>
+            <td><span style="color:#818cf8;font-weight:700;">${auc}</span></td>
+        `;
+        tbody.appendChild(row);
+    });
+
+    if (badge) badge.textContent = `${classNames.length} classes · ${report['macro avg'] ? (report['macro avg']['f1-score']*100).toFixed(1)+'% macro F1' : ''}`;
+}
+
+// ── TRAIN MODEL ──
+trainModelBtn && trainModelBtn.addEventListener('click', async () => {
+    if (!mlUploadedFile) return;
+
+    const icon    = document.getElementById('trainBtnIcon');
+    const txt     = document.getElementById('trainBtnText');
+    const spinner = document.getElementById('trainSpinner');
+
+    icon.style.display    = 'none';
+    txt.textContent       = 'Training…';
+    spinner.classList.remove('hidden');
+    trainModelBtn.disabled = true;
+
+    try {
+        const isFeatureCsv = lastFeatureState !== null;
+        const labelColVal  = document.getElementById('mlLabelCol').value || 'event';
+
+        const formData = new FormData();
+        formData.append('file',           mlUploadedFile);
+        formData.append('model_name',     selectedModel);
+        formData.append('label_col',      labelColVal);
+        formData.append('is_feature_csv', isFeatureCsv);
+        formData.append('test_size',      parseFloat(document.getElementById('mlTestSize').value) || 0.2);
+        formData.append('window_size_sec',parseFloat(document.getElementById('mlWindowSize').value) || 1.0);
+        formData.append('overlap_ratio',  parseFloat(document.getElementById('mlOverlap').value) || 0.5);
+        formData.append('random_state',   parseInt(document.getElementById('mlRandomState').value) || 42);
+
+        const resp = await fetch(`${API_BASE}/api/train-model`, { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (!resp.ok) throw new Error(data.detail || 'Training failed');
+
+        // Show results
+        document.getElementById('modelEmptyState').style.display     = 'none';
+        document.getElementById('modelResultsContainer').style.display = 'block';
+
+        // KPI cards
+        setKPI('kpiAccuracy',  'kpiAccuracyBar',  data.accuracy,   'cyan');
+        setKPI('kpiPrecision', 'kpiPrecisionBar', data.precision_macro, 'cyan');
+        setKPI('kpiRecall',    'kpiRecallBar',     data.recall_macro,   'cyan');
+        setKPI('kpiF1',        'kpiF1Bar',         data.f1_macro,       'cyan');
+        setKPI('kpiRocAuc',    'kpiRocAucBar',     data.roc_auc,        'purple');
+
+        // Charts
+        renderROCChart(data.roc_curves);
+        renderConfusionMatrix(data.confusion_matrix, data.class_names);
+        renderClassReport(data.classification_report, data.roc_curves, data.class_names);
+
+    } catch (err) {
+        alert('❌ Training error: ' + err.message);
+    } finally {
+        icon.style.display     = 'inline';
+        txt.textContent        = 'Train & Evaluate Model';
+        spinner.classList.add('hidden');
+        trainModelBtn.disabled = false;
+    }
+});
+
+// ── CV Fold Bar Chart ──
+function renderCVFoldChart(folds) {
+    const ctx = document.getElementById('cvFoldChart');
+    if (!ctx) return;
+    if (cvFoldChartInst) { cvFoldChartInst.destroy(); cvFoldChartInst = null; }
+
+    const labels = folds.map((f, i) => `Fold ${i+1}`);
+    const accs   = folds.map(f => +(f.accuracy * 100).toFixed(2));
+    const aucs   = folds.map(f => +(f.roc_auc !== undefined ? f.roc_auc * 100 : 0).toFixed(2));
+
+    cvFoldChartInst = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'Accuracy (%)',
+                    data: accs,
+                    backgroundColor: 'rgba(56,189,248,0.25)',
+                    borderColor: '#38bdf8',
+                    borderWidth: 2,
+                    borderRadius: 6,
+                },
+                {
+                    label: 'ROC-AUC (%)',
+                    data: aucs,
+                    backgroundColor: 'rgba(129,140,248,0.25)',
+                    borderColor: '#818cf8',
+                    borderWidth: 2,
+                    borderRadius: 6,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#94a3b8', font: { family: 'Outfit', size: 11 } } },
+            },
+            scales: {
+                x: { ticks: { color: '#475569' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+                y: { min: 0, max: 100, ticks: { color: '#475569', callback: v => v + '%' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+            },
+        },
+    });
+}
+
+// ── Fold Detail Cards ──
+function renderFoldCards(folds) {
+    const wrap = document.getElementById('foldDetailsWrap');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    folds.forEach((f, i) => {
+        const card = document.createElement('div');
+        card.className = 'fold-card';
+        card.innerHTML = `
+            <div class="fold-card-header">
+                <span class="fold-num">Fold ${i + 1}</span>
+                <span class="fold-acc-badge">${(f.accuracy * 100).toFixed(1)}%</span>
+            </div>
+            <div class="fold-stat-row"><span>F1 Macro</span><span class="fold-stat-val">${(f.f1_macro * 100).toFixed(1)}%</span></div>
+            <div class="fold-stat-row"><span>ROC-AUC</span><span class="fold-stat-val">${f.roc_auc !== undefined ? (f.roc_auc * 100).toFixed(1) + '%' : '—'}</span></div>
+            <div class="fold-stat-row"><span>Train samples</span><span class="fold-stat-val">${f.n_train ?? '—'}</span></div>
+            <div class="fold-stat-row"><span>Test samples</span><span class="fold-stat-val">${f.n_test ?? '—'}</span></div>
+        `;
+        wrap.appendChild(card);
+    });
+}
+
+// ── CROSS-VALIDATE ──
+crossValidateBtn && crossValidateBtn.addEventListener('click', async () => {
+    if (!mlUploadedFile) return;
+
+    const icon    = document.getElementById('cvBtnIcon');
+    const txt     = document.getElementById('cvBtnText');
+    const spinner = document.getElementById('cvSpinner');
+
+    icon.style.display      = 'none';
+    txt.textContent         = 'Running…';
+    spinner.classList.remove('hidden');
+    crossValidateBtn.disabled = true;
+
+    try {
+        const isFeatureCsv = lastFeatureState !== null;
+        const labelColVal  = document.getElementById('mlLabelCol').value || 'event';
+
+        const formData = new FormData();
+        formData.append('file',           mlUploadedFile);
+        formData.append('model_name',     selectedModel);
+        formData.append('label_col',      labelColVal);
+        formData.append('is_feature_csv', isFeatureCsv);
+        formData.append('n_splits',       parseInt(document.getElementById('cvNSplits').value) || 5);
+        formData.append('window_size_sec',parseFloat(document.getElementById('mlWindowSize').value) || 1.0);
+        formData.append('overlap_ratio',  parseFloat(document.getElementById('mlOverlap').value) || 0.5);
+        formData.append('random_state',   parseInt(document.getElementById('mlRandomState').value) || 42);
+
+        const resp = await fetch(`${API_BASE}/api/cross-validate`, { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'Cross-validation failed');
+
+        // Show CV results
+        document.getElementById('cvEmptyState').style.display      = 'none';
+        document.getElementById('cvResultsContainer').style.display = 'block';
+
+        document.getElementById('cvMeanAccuracy').textContent  = (data.mean_accuracy * 100).toFixed(1) + '%';
+        document.getElementById('cvStdAccuracy').textContent   = '± ' + (data.std_accuracy * 100).toFixed(1) + '%';
+        document.getElementById('cvMeanF1').textContent        = (data.mean_f1_macro * 100).toFixed(1) + '%';
+        document.getElementById('cvMeanRocAuc').textContent    = (data.mean_roc_auc * 100).toFixed(1) + '%';
+        document.getElementById('cvStdRocAuc').textContent     = '± ' + (data.std_roc_auc * 100).toFixed(1) + '%';
+        document.getElementById('cvNSplitsResult').textContent = data.n_splits;
+
+        renderCVFoldChart(data.folds);
+        renderFoldCards(data.folds);
+
+    } catch (err) {
+        alert('❌ Cross-validation error: ' + err.message);
+    } finally {
+        icon.style.display        = 'inline';
+        txt.textContent           = 'Run Cross-Validation';
+        spinner.classList.add('hidden');
+        crossValidateBtn.disabled = false;
+    }
+});
+
