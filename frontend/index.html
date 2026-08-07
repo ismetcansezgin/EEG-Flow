@@ -49,10 +49,10 @@
                     <span class="nav-label">Feature Engine</span>
                     <span class="nav-badge active-badge" id="badge-features">Active</span>
                 </a>
-                <a href="#" class="nav-item locked" id="nav-models">
+                <a href="#" class="nav-item" id="nav-models" data-page="page-models">
                     <span class="nav-icon">🤖</span>
                     <span class="nav-label">ML Models</span>
-                    <span class="nav-badge phase-badge">Phase 3</span>
+                    <span class="nav-badge active-badge" id="badge-models">Active</span>
                 </a>
 
                 <p class="nav-section-label" style="margin-top:16px;">DOCS</p>
@@ -237,12 +237,27 @@
                         </div>
                     </div>
 
+                    <!-- Column Order Visual -->
+                    <div class="col-order-visual">
+                        <div class="col-order-label">📐 Recommended Column Order (left → right in your CSV):</div>
+                        <div class="col-order-row">
+                            <div class="col-order-pill time-pill">1. time_ms<span>Recommended</span></div>
+                            <div class="col-order-arrow">→</div>
+                            <div class="col-order-pill subject-pill">2. subject_id<span>Optional</span></div>
+                            <div class="col-order-arrow">→</div>
+                            <div class="col-order-pill event-pill">3. event<span>Required for ML</span></div>
+                            <div class="col-order-arrow">→</div>
+                            <div class="col-order-pill eeg-pill">4. Fp1, Fp2, F3 … (EEG channels)<span>Required</span></div>
+                        </div>
+                        <p class="col-order-note">⚠️ Column order does <strong>not</strong> need to be exact — EEGFlow detects columns by their <strong>name</strong>, not position. However, the above order is the convention used in all examples.</p>
+                    </div>
+
                     <div class="col-table-wrap">
                         <table class="col-table">
                             <thead>
                                 <tr>
                                     <th>Column Role</th>
-                                    <th>Accepted Column Names (examples)</th>
+                                    <th>Accepted Column Names</th>
                                     <th>Required?</th>
                                     <th>Description</th>
                                 </tr>
@@ -252,25 +267,25 @@
                                     <td><span class="col-tag time-tag">Time</span></td>
                                     <td><code>time</code>, <code>timestamp</code>, <code>time_ms</code>, <code>time_sec</code></td>
                                     <td><span class="req-badge recommended">Recommended</span></td>
-                                    <td>Timestamps per sample. Used to auto-detect sampling rate (fₛ). Can be in milliseconds or seconds.</td>
+                                    <td>Timestamps per sample. EEGFlow uses consecutive time differences to <strong>auto-detect sampling rate (fₛ)</strong>. Use milliseconds (e.g. 0, 4, 8 … for 250 Hz) or seconds.</td>
                                 </tr>
                                 <tr>
                                     <td><span class="col-tag subject-tag">Subject</span></td>
                                     <td><code>subject_id</code>, <code>subject</code>, <code>participant</code>, <code>participant_id</code></td>
                                     <td><span class="req-badge optional">Optional</span></td>
-                                    <td>Participant identifier. When present, NaN interpolation is performed per-subject to prevent data leakage.</td>
+                                    <td>Participant identifier (integer). Required for <strong>Group K-Fold cross-validation</strong> to prevent subject-level data leakage between folds.</td>
                                 </tr>
                                 <tr>
                                     <td><span class="col-tag event-tag">Event / Label</span></td>
                                     <td><code>event</code>, <code>label</code>, <code>state</code>, <code>marker</code>, <code>class</code></td>
-                                    <td><span class="req-badge optional">Optional</span></td>
-                                    <td>Cognitive state or trial marker (e.g. <em>Relaxed</em>, <em>Task</em>). Used for epoch-level classification in later phases.</td>
+                                    <td><span class="req-badge optional">Required for ML</span></td>
+                                    <td>Cognitive state or trial marker (e.g. <em>Relaxed</em>, <em>Task</em>). <strong>Must have ≥ 2 unique classes</strong> for ML training. Without this column, feature extraction still works but classification is unavailable.</td>
                                 </tr>
                                 <tr class="highlight-row">
                                     <td><span class="col-tag eeg-tag">EEG Channels</span></td>
                                     <td><code>Fp1</code>, <code>Fp2</code>, <code>F3</code>, <code>C3</code>, <code>O1</code> … any electrode name</td>
                                     <td><span class="req-badge required">Required</span></td>
-                                    <td>All remaining numeric columns are treated as EEG electrode signals. Must contain float values in µV.</td>
+                                    <td>All remaining numeric columns are treated as EEG electrode signals. Values must be in <strong>µV (microvolts)</strong>. At least <strong>1 channel</strong> required; typical datasets use 8–64 channels.</td>
                                 </tr>
                                 <tr>
                                     <td><span class="col-tag meta-tag">Excluded Metadata</span></td>
@@ -281,6 +296,26 @@
                             </tbody>
                         </table>
                     </div>
+
+                    <!-- Minimum requirements box -->
+                    <div class="min-req-box">
+                        <div class="min-req-item">
+                            <span class="min-req-icon">📏</span>
+                            <div><strong>Minimum Rows</strong><br>At least <code>fs × window_size</code> rows (e.g. 250 rows for 1-second windows at 250 Hz)</div>
+                        </div>
+                        <div class="min-req-item">
+                            <span class="min-req-icon">🏷️</span>
+                            <div><strong>Minimum Classes</strong><br>At least <code>2 unique event labels</code> for ML training (e.g. <em>Relaxed</em> + <em>Task</em>)</div>
+                        </div>
+                        <div class="min-req-item">
+                            <span class="min-req-icon">📡</span>
+                            <div><strong>Sampling Rate</strong><br>Auto-detected from <code>time_ms</code> column. If absent, defaults to <code>256 Hz</code></div>
+                        </div>
+                        <div class="min-req-item">
+                            <span class="min-req-icon">🔢</span>
+                            <div><strong>Minimum Channels</strong><br>At least <code>1 numeric EEG channel</code> column required</div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Section: Example CSV -->
@@ -289,20 +324,30 @@
                         <span class="guide-section-num">02</span>
                         <div>
                             <h2>Minimal Valid CSV Example</h2>
-                            <p>Copy this template and replace the values with your own data.</p>
+                            <p>Copy this template and replace the values with your own data. The example below shows 2 subjects × 2 event classes at 250 Hz (4 ms between samples).</p>
                         </div>
                     </div>
                     <div class="code-block-wrap">
                         <div class="code-block-header">
-                            <span>📄 sample_eeg.csv</span>
+                            <span>📄 sample_eeg.csv — 250 Hz · 2 subjects · 2 classes · 8 channels</span>
                             <button class="copy-btn" id="copyCSV">Copy</button>
                         </div>
                         <pre class="code-block" id="csvExample">time_ms,subject_id,event,Fp1,Fp2,F3,F4,C3,C4,O1,O2
 0,1,Relaxed,12.4,11.8,9.2,8.7,7.1,7.5,15.3,14.9
 4,1,Relaxed,12.1,11.5,9.0,8.5,7.3,7.2,15.1,14.7
 8,1,Relaxed,12.6,11.9,9.4,8.8,7.0,7.6,15.5,15.0
-0,2,Task,6.1,5.9,7.8,8.0,6.5,6.7,5.2,5.0
-4,2,Task,6.3,6.0,7.9,8.1,6.4,6.8,5.1,4.9</pre>
+12,1,Task,6.1,5.9,7.8,8.0,6.5,6.7,5.2,5.0
+16,1,Task,6.3,6.0,7.9,8.1,6.4,6.8,5.1,4.9
+0,2,Relaxed,11.2,10.5,8.8,9.1,6.9,7.1,14.5,13.8
+4,2,Relaxed,11.5,10.8,8.9,9.0,7.0,7.3,14.7,14.0
+8,2,Task,5.8,5.5,7.5,7.8,6.2,6.5,4.9,4.7
+12,2,Task,5.9,5.7,7.6,7.9,6.3,6.6,5.0,4.8</pre>
+                        <div class="csv-col-legend">
+                            <span class="legend-pill time-pill">time_ms → sampling rate auto-detected (1000 ÷ 4 ms = 250 Hz)</span>
+                            <span class="legend-pill subject-pill">subject_id → 2 subjects for GroupKFold CV</span>
+                            <span class="legend-pill event-pill">event → 2 classes: Relaxed, Task</span>
+                            <span class="legend-pill eeg-pill">Fp1…O2 → 8 EEG channels in µV</span>
+                        </div>
                     </div>
                 </div>
 
@@ -934,6 +979,254 @@ print("Ready! Shape:", df.shape)</pre>
                 </div>
 
             </div>
+
+            <!-- ══════════════════════════════
+                 PAGE: ML MODELS
+                 ══════════════════════════════ -->
+            <div class="page-view" id="page-models" style="display:none;">
+                <div class="page-header">
+                    <div>
+                        <h1 class="page-title">🤖 ML Model Training & Evaluation</h1>
+                        <p class="page-subtitle">Train SVM, Random Forest, or XGBoost classifiers on extracted EEG features and evaluate performance with ROC-AUC, confusion matrix, and cross-validation.</p>
+                    </div>
+                </div>
+
+                <!-- ── Config + Train Row ───────────────────── -->
+                <div class="models-layout">
+
+                    <!-- LEFT: Configuration Panel -->
+                    <div class="model-config-panel glass-card">
+                        <h3 class="panel-title">⚙️ Training Configuration</h3>
+
+                        <!-- File Upload -->
+                        <div class="config-section">
+                            <label class="config-label">📂 Upload Feature CSV</label>
+                            <p class="config-hint">Upload the feature matrix CSV exported from the Feature Engine step.</p>
+                            <div class="model-drop-zone" id="modelDropZone">
+                                <span class="drop-icon">📊</span>
+                                <span class="drop-text">Drop feature CSV here or <label for="modelFileInput" class="drop-browse">browse</label></span>
+                                <input type="file" id="modelFileInput" accept=".csv" style="display:none;">
+                            </div>
+                            <div class="model-file-info" id="modelFileInfo" style="display:none;">
+                                <span class="file-badge">✅</span>
+                                <span id="modelFileName">—</span>
+                            </div>
+                        </div>
+
+                        <div class="config-divider"></div>
+
+                        <!-- Model Selection -->
+                        <div class="config-section">
+                            <label class="config-label">🤖 Classifier</label>
+                            <div class="model-selector" id="modelSelector">
+                                <button class="model-btn active" data-model="svm">SVM</button>
+                                <button class="model-btn" data-model="random_forest">Random Forest</button>
+                                <button class="model-btn" data-model="xgboost">XGBoost</button>
+                            </div>
+                        </div>
+
+                        <div class="config-divider"></div>
+
+                        <!-- Common Params -->
+                        <div class="config-section">
+                            <label class="config-label">📋 Data Parameters</label>
+                            <div class="param-grid">
+                                <div class="param-row">
+                                    <label for="mlLabelCol">Label Column</label>
+                                    <input type="text" id="mlLabelCol" class="param-input" value="label" placeholder="e.g. label">
+                                </div>
+                                <div class="param-row">
+                                    <label for="mlTestSize">Test Size</label>
+                                    <input type="number" id="mlTestSize" class="param-input" value="0.2" step="0.05" min="0.1" max="0.4">
+                                </div>
+                                <div class="param-row">
+                                    <label for="mlSamplingRate">Sampling Rate (Hz)</label>
+                                    <input type="number" id="mlSamplingRate" class="param-input" value="256" min="64" max="2048">
+                                </div>
+                                <div class="param-row">
+                                    <label for="mlWindowSize">Window Size (s)</label>
+                                    <input type="number" id="mlWindowSize" class="param-input" value="1.0" step="0.5" min="0.5">
+                                </div>
+                                <div class="param-row">
+                                    <label for="mlOverlap">Overlap Ratio</label>
+                                    <input type="number" id="mlOverlap" class="param-input" value="0.5" step="0.1" min="0.0" max="0.9">
+                                </div>
+                                <div class="param-row">
+                                    <label for="mlRandomState">Random State</label>
+                                    <input type="number" id="mlRandomState" class="param-input" value="42" min="0">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="config-divider"></div>
+
+                        <!-- Action Buttons -->
+                        <button class="run-btn" id="trainModelBtn" disabled>
+                            <span id="trainBtnIcon">🚀</span>
+                            <span id="trainBtnText">Train &amp; Evaluate Model</span>
+                            <span class="btn-spinner hidden" id="trainSpinner"></span>
+                        </button>
+                    </div>
+
+                    <!-- RIGHT: KPI Results -->
+                    <div class="model-results-area">
+
+                        <!-- Empty State -->
+                        <div class="model-empty-state" id="modelEmptyState">
+                            <div class="empty-icon">🧠</div>
+                            <h3>No Model Trained Yet</h3>
+                            <p>Upload a feature CSV, select a classifier, and click <strong>Train &amp; Evaluate Model</strong> to see results here.</p>
+                        </div>
+
+                        <!-- Results (hidden until trained) -->
+                        <div id="modelResultsContainer" style="display:none;">
+
+                            <!-- KPI Cards -->
+                            <div class="model-kpi-grid" id="modelKpiGrid">
+                                <div class="model-kpi-card">
+                                    <div class="mkpi-icon">🎯</div>
+                                    <div class="mkpi-label">ACCURACY</div>
+                                    <div class="mkpi-value" id="kpiAccuracy">—</div>
+                                    <div class="mkpi-bar-wrap"><div class="mkpi-bar" id="kpiAccuracyBar"></div></div>
+                                </div>
+                                <div class="model-kpi-card">
+                                    <div class="mkpi-icon">📐</div>
+                                    <div class="mkpi-label">PRECISION</div>
+                                    <div class="mkpi-value" id="kpiPrecision">—</div>
+                                    <div class="mkpi-bar-wrap"><div class="mkpi-bar" id="kpiPrecisionBar"></div></div>
+                                </div>
+                                <div class="model-kpi-card">
+                                    <div class="mkpi-icon">🔍</div>
+                                    <div class="mkpi-label">RECALL</div>
+                                    <div class="mkpi-value" id="kpiRecall">—</div>
+                                    <div class="mkpi-bar-wrap"><div class="mkpi-bar" id="kpiRecallBar"></div></div>
+                                </div>
+                                <div class="model-kpi-card">
+                                    <div class="mkpi-icon">⚖️</div>
+                                    <div class="mkpi-label">F1-SCORE</div>
+                                    <div class="mkpi-value" id="kpiF1">—</div>
+                                    <div class="mkpi-bar-wrap"><div class="mkpi-bar" id="kpiF1Bar"></div></div>
+                                </div>
+                                <div class="model-kpi-card mkpi-highlight">
+                                    <div class="mkpi-icon">📈</div>
+                                    <div class="mkpi-label">ROC-AUC</div>
+                                    <div class="mkpi-value" id="kpiRocAuc">—</div>
+                                    <div class="mkpi-bar-wrap"><div class="mkpi-bar" id="kpiRocAucBar"></div></div>
+                                </div>
+                            </div>
+
+                            <!-- Charts Row -->
+                            <div class="charts-row">
+                                <!-- ROC Curve -->
+                                <div class="chart-card glass-card">
+                                    <div class="chart-card-header">
+                                        <h3>📈 ROC Curve (One-vs-Rest per Class)</h3>
+                                        <span class="chart-sub">Higher AUC → better class discrimination</span>
+                                    </div>
+                                    <div class="chart-wrap">
+                                        <canvas id="rocChart"></canvas>
+                                    </div>
+                                </div>
+
+                                <!-- Confusion Matrix -->
+                                <div class="chart-card glass-card">
+                                    <div class="chart-card-header">
+                                        <h3>🔲 Confusion Matrix</h3>
+                                        <span class="chart-sub">Predicted vs. actual class distribution</span>
+                                    </div>
+                                    <div class="confusion-matrix-wrap" id="confusionMatrixWrap">
+                                        <!-- Dynamically rendered -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Per-Class Report Table -->
+                            <div class="table-card">
+                                <div class="table-card-header">
+                                    <h3>📋 Per-Class Classification Report</h3>
+                                    <span class="table-subtitle" id="modelReportBadge"></span>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="metrics-table" id="classReportTable">
+                                        <thead>
+                                            <tr>
+                                                <th>Class</th>
+                                                <th>Precision</th>
+                                                <th>Recall</th>
+                                                <th>F1-Score</th>
+                                                <th>Support</th>
+                                                <th>ROC-AUC</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="classReportBody"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ══ Cross-Validation Section ══════════════════ -->
+                <div class="cv-section glass-card" style="margin-top:24px;">
+                    <div class="cv-header">
+                        <div>
+                            <h3 class="panel-title">🔁 Group K-Fold Cross-Validation</h3>
+                            <p class="config-hint">Subject-level data leakage prevention using GroupKFold — each subject appears in only one fold's test set.</p>
+                        </div>
+                        <div class="cv-controls">
+                            <div class="param-row">
+                                <label for="cvNSplits">Folds (n_splits)</label>
+                                <input type="number" id="cvNSplits" class="param-input" value="5" min="2" max="20" style="width:80px;">
+                            </div>
+                            <button class="run-btn cv-run-btn" id="crossValidateBtn" disabled>
+                                <span id="cvBtnIcon">🔁</span>
+                                <span id="cvBtnText">Run Cross-Validation</span>
+                                <span class="btn-spinner hidden" id="cvSpinner"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- CV Empty State -->
+                    <div class="cv-empty" id="cvEmptyState">
+                        <p>Upload a CSV and run cross-validation to see fold-by-fold results.</p>
+                    </div>
+
+                    <!-- CV Results -->
+                    <div id="cvResultsContainer" style="display:none;">
+                        <!-- CV KPI Row -->
+                        <div class="cv-kpi-row">
+                            <div class="cv-kpi-card">
+                                <div class="cv-kpi-label">MEAN ACCURACY</div>
+                                <div class="cv-kpi-value" id="cvMeanAccuracy">—</div>
+                                <div class="cv-kpi-std" id="cvStdAccuracy">±—</div>
+                            </div>
+                            <div class="cv-kpi-card">
+                                <div class="cv-kpi-label">MEAN F1-SCORE</div>
+                                <div class="cv-kpi-value" id="cvMeanF1">—</div>
+                            </div>
+                            <div class="cv-kpi-card">
+                                <div class="cv-kpi-label">MEAN ROC-AUC</div>
+                                <div class="cv-kpi-value cv-highlight" id="cvMeanRocAuc">—</div>
+                                <div class="cv-kpi-std" id="cvStdRocAuc">±—</div>
+                            </div>
+                            <div class="cv-kpi-card">
+                                <div class="cv-kpi-label">N SPLITS</div>
+                                <div class="cv-kpi-value" id="cvNSplitsResult">—</div>
+                            </div>
+                        </div>
+
+                        <!-- Fold Accuracy Bar Chart -->
+                        <div class="cv-chart-wrap">
+                            <canvas id="cvFoldChart"></canvas>
+                        </div>
+
+                        <!-- Fold Details -->
+                        <div class="fold-details-wrap" id="foldDetailsWrap"></div>
+                    </div>
+                </div>
+
+            </div>
+            <!-- END page-models -->
 
         </main>
     </div>
