@@ -544,6 +544,8 @@ async def extract_eeg_features(
                 "n_epochs":   n_epochs,
                 "n_features": n_features,
                 "feature_names": feature_cols,
+                "label_col": "event",
+                "feature_csv": df_selected.to_csv(index=False),
                 "time_domain_count": len([c for c in feature_cols if any(c.endswith(s) for s in time_suffixes)]),
                 "freq_domain_count": len([c for c in feature_cols if any(s in c for s in freq_suffixes)]),
                 "class_band_summary":  class_band_summary,
@@ -582,12 +584,14 @@ async def extract_eeg_features(
 # ══════════════════════════════════════════════════════════════════════════════
 @app.post("/api/train-model")
 async def train_model_endpoint(
-    file: UploadFile = File(..., description="EEG dataset CSV file (with event_label column)"),
+    file: UploadFile = File(..., description="EEG dataset CSV file or pre-computed feature matrix CSV"),
     model_name: str  = Form("svm",  description="Classifier: 'svm' | 'random_forest' | 'xgboost'"),
     window_size_sec: float = Form(2.0, description="Epoch window size in seconds"),
     overlap_ratio:   float = Form(0.5, description="Sliding window overlap ratio [0, 1)"),
     test_size:       float = Form(0.2, description="Test split fraction [0.1, 0.5]"),
     random_state:    int   = Form(42,  description="Random seed for reproducibility"),
+    is_feature_csv:  bool  = Form(False, description="If True, uploaded CSV is a pre-computed feature matrix (skips epoch+feature extraction)"),
+    label_col:       str   = Form("event", description="Column name for class labels in the feature CSV"),
 ):
     """
     Full ML pipeline in one API call:
@@ -625,6 +629,69 @@ async def train_model_endpoint(
             tmp.write(content)
             temp_file_path = tmp.name
 
+        # ══ FAST PATH: pre-computed feature matrix ═══════════════════════════
+        if is_feature_csv:
+            feature_df = pd.read_csv(temp_file_path)
+            os.remove(temp_file_path)
+            temp_file_path = None
+
+            # Determine label column (try supplied name, fallback candidates)
+            candidates = [label_col, "event", "event_label", "label"]
+            actual_label_col = next((c for c in candidates if c in feature_df.columns), None)
+            if actual_label_col is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Label column '{label_col}' not found. Available columns: {list(feature_df.columns)[:10]}"
+                )
+
+            meta_cols    = {"event", "event_label", "label", "subject_id", "subject"}
+            feature_names = [c for c in feature_df.columns if c not in meta_cols]
+            X = feature_df[feature_names].values.astype(np.float32)
+            y = feature_df[actual_label_col].values
+
+            unique_classes = np.unique(y)
+            if len(unique_classes) < 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"At least 2 event classes required. Found: {unique_classes.tolist()}"
+                )
+
+            metrics = train_evaluate(
+                X=X,
+                y=y,
+                model_name=model_name,
+                test_size=test_size,
+                random_state=random_state,
+                class_names=[str(c) for c in unique_classes],
+            )
+
+            return JSONResponse(content={
+                "success":                   True,
+                "message":                   f"{model_name.upper()} trained on pre-computed features.",
+                "model_name":                metrics["model_name"],
+                "accuracy":                  metrics["accuracy"],
+                "precision_macro":           metrics["precision_macro"],
+                "recall_macro":              metrics["recall_macro"],
+                "f1_macro":                  metrics["f1_macro"],
+                "f1_weighted":               metrics["f1_weighted"],
+                "roc_auc":                   metrics["roc_auc"],
+                "roc_curves":                metrics["roc_curves"],
+                "confusion_matrix":          metrics["confusion_matrix"],
+                "classification_report":     metrics["classification_report"],
+                "train_samples":             metrics["train_samples"],
+                "test_samples":              metrics["test_samples"],
+                "n_classes":                 metrics["n_classes"],
+                "class_names":               [str(c) for c in unique_classes],
+                "feature_matrix_shape":      list(X.shape),
+                "epoch_info": {
+                    "n_epochs":        int(X.shape[0]),
+                    "window_size_sec": window_size_sec,
+                    "overlap_ratio":   overlap_ratio,
+                    "sampling_rate":   None,
+                },
+            })
+        # ══ END FAST PATH ════════════════════════════════════════════════════
+
         # ── Load & validate EEG data ────────────────────────────────────────
         loader = EEGDataLoader(temp_file_path)
         df, metadata = loader.load_and_validate()
@@ -661,11 +728,11 @@ async def train_model_endpoint(
 
         # ── Prepare X (features) and y (labels) ─────────────────────────────
         # extract_all_features stores labels in 'event' column
-        label_col = "event" if "event" in feature_df.columns else "event_label"
-        if label_col not in feature_df.columns:
+        label_col_actual = "event" if "event" in feature_df.columns else "event_label"
+        if label_col_actual not in feature_df.columns:
             if labels_list is not None:
                 feature_df["event"] = labels_list
-                label_col = "event"
+                label_col_actual = "event"
             else:
                 raise HTTPException(
                     status_code=400,
@@ -673,7 +740,7 @@ async def train_model_endpoint(
                 )
 
         X = feature_df[feature_names].values.astype(np.float32)
-        y = feature_df[label_col].values
+        y = feature_df[label_col_actual].values
 
         unique_classes = np.unique(y)
         if len(unique_classes) < 2:
@@ -736,12 +803,14 @@ async def train_model_endpoint(
 # ══════════════════════════════════════════════════════════════════════════════
 @app.post("/api/cross-validate")
 async def cross_validate_endpoint(
-    file: UploadFile = File(..., description="EEG dataset CSV file (with event_label and subject_id columns)"),
+    file: UploadFile = File(..., description="EEG dataset CSV file or pre-computed feature matrix CSV"),
     model_name: str  = Form("svm",  description="Classifier: 'svm' | 'random_forest' | 'xgboost'"),
     window_size_sec: float = Form(2.0, description="Epoch window size in seconds"),
     overlap_ratio:   float = Form(0.5, description="Sliding window overlap ratio [0, 1)"),
     n_splits:        int   = Form(5,   description="Number of folds (partitions)"),
     random_state:    int   = Form(42,  description="Random seed for model reproducibility"),
+    is_feature_csv:  bool  = Form(False, description="If True, uploaded CSV is a pre-computed feature matrix"),
+    label_col:       str   = Form("event", description="Column name for class labels in the feature CSV"),
 ):
     """
     Perform Group K-Fold Cross-Validation on the uploaded EEG dataset.
@@ -776,6 +845,75 @@ async def cross_validate_endpoint(
             content = await file.read()
             tmp.write(content)
             temp_file_path = tmp.name
+
+        # ══ FAST PATH: pre-computed feature matrix ═══════════════════════════
+        if is_feature_csv:
+            feature_df = pd.read_csv(temp_file_path)
+            os.remove(temp_file_path)
+            temp_file_path = None
+
+            candidates = [label_col, "event", "event_label", "label"]
+            actual_label_col = next((c for c in candidates if c in feature_df.columns), None)
+            if actual_label_col is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Label column '{label_col}' not found. Available: {list(feature_df.columns)[:10]}"
+                )
+
+            meta_cols     = {"event", "event_label", "label", "subject_id", "subject"}
+            feature_names = [c for c in feature_df.columns if c not in meta_cols]
+            X = feature_df[feature_names].values.astype(np.float32)
+            y = feature_df[actual_label_col].values
+
+            # Use subject_id for grouping if available, otherwise create sequential groups
+            if "subject_id" in feature_df.columns:
+                subjects_list = feature_df["subject_id"].fillna(0).astype(int).tolist()
+            else:
+                subjects_list = list(range(len(y)))  # each sample its own group
+
+            unique_classes = np.unique(y)
+            if len(unique_classes) < 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"At least 2 event classes required. Found: {unique_classes.tolist()}"
+                )
+
+            cv_results = cross_validate_model(
+                X=X,
+                y=y,
+                groups=np.array(subjects_list),
+                model_name=model_name,
+                n_splits=n_splits,
+                random_state=random_state,
+                class_names=[str(c) for c in unique_classes],
+            )
+
+            return JSONResponse(content={
+                "success":                      True,
+                "message":                      f"Group K-Fold CV for {model_name.upper()} completed.",
+                "model_name":                   cv_results["model_name"],
+                "n_splits":                     cv_results["n_splits"],
+                "mean_accuracy":                cv_results["mean_accuracy"],
+                "std_accuracy":                 cv_results["std_accuracy"],
+                "mean_precision_macro":         cv_results["mean_precision_macro"],
+                "mean_recall_macro":            cv_results["mean_recall_macro"],
+                "mean_f1_macro":                cv_results["mean_f1_macro"],
+                "mean_roc_auc":                 cv_results["mean_roc_auc"],
+                "std_roc_auc":                  cv_results["std_roc_auc"],
+                "accumulated_confusion_matrix": cv_results["accumulated_confusion_matrix"],
+                "folds":                        cv_results["folds"],
+                "n_samples":                    cv_results["n_samples"],
+                "n_classes":                    cv_results["n_classes"],
+                "class_names":                  cv_results["class_names"],
+                "feature_matrix_shape":         list(X.shape),
+                "epoch_info": {
+                    "n_epochs":        int(X.shape[0]),
+                    "window_size_sec": window_size_sec,
+                    "overlap_ratio":   overlap_ratio,
+                    "sampling_rate":   None,
+                },
+            })
+        # ══ END FAST PATH ════════════════════════════════════════════════════
 
         # ── Load & validate EEG data ────────────────────────────────────────
         loader = EEGDataLoader(temp_file_path)
