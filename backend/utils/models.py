@@ -37,6 +37,8 @@ from sklearn.metrics import (
     f1_score,
     precision_score,
     recall_score,
+    roc_auc_score,
+    roc_curve,
 )
 from sklearn.model_selection import train_test_split, GroupKFold
 from sklearn.pipeline import Pipeline
@@ -223,7 +225,8 @@ def evaluate_model(
     class_names: Optional[List[str]] = None,
 ) -> MetricsDict:
     """
-    Evaluate a fitted pipeline and return a comprehensive metrics dictionary.
+    Evaluate a fitted pipeline and return a comprehensive metrics dictionary,
+    including ROC-AUC and ROC curve coordinates for frontend plotting.
 
     Parameters
     ----------
@@ -232,7 +235,7 @@ def evaluate_model(
     X_test : np.ndarray, shape (n_samples, n_features)
         Test feature matrix.
     y_test : np.ndarray, shape (n_samples,)
-        True class labels.
+        True class labels (integers starting from 0).
     class_names : list[str] | None
         Human-readable class label names for the classification report.
 
@@ -249,9 +252,62 @@ def evaluate_model(
             "classification_report": str,        # per-class breakdown
             "n_test_samples"   : int,            # number of test samples
             "n_classes"        : int,            # number of unique classes
+            "roc_auc"          : float,          # ROC-AUC score
+            "roc_curves"       : dict,           # OVR ROC curves per class
         }
     """
     y_pred = pipeline.predict(X_test)
+    y_test_unique = np.unique(y_test)
+    n_unique_classes = len(y_test_unique)
+
+    # ── Calculate ROC-AUC & ROC Curve Coordinates (One-Vs-Rest) ──────────────────
+    roc_auc = 0.0
+    roc_curves = {}
+
+    try:
+        if hasattr(pipeline, "predict_proba") and n_unique_classes >= 2:
+            y_prob = pipeline.predict_proba(X_test)
+            n_output_classes = y_prob.shape[1]
+
+            # Overall ROC-AUC score
+            if n_output_classes == 2:
+                # Binary classification
+                roc_auc = round(float(roc_auc_score(y_test, y_prob[:, 1])), 6)
+            else:
+                # Multi-class
+                roc_auc = round(float(roc_auc_score(y_test, y_prob, multi_class="ovr", average="macro")), 6)
+
+            # Generate OVR curves for each output class
+            for c_idx in range(n_output_classes):
+                c_name = class_names[c_idx] if (class_names and c_idx < len(class_names)) else f"Class_{c_idx}"
+                
+                # Binarize targets for class c_idx
+                y_test_binary = (y_test == c_idx).astype(int)
+                
+                if len(np.unique(y_test_binary)) >= 2:
+                    fpr, tpr, _ = roc_curve(y_test_binary, y_prob[:, c_idx])
+                    class_auc = round(float(roc_auc_score(y_test_binary, y_prob[:, c_idx])), 6)
+
+                    # Downsample coordinates to limit payload size
+                    if len(fpr) > 100:
+                        indices = np.linspace(0, len(fpr) - 1, 100, dtype=int)
+                        fpr = fpr[indices]
+                        tpr = tpr[indices]
+
+                    roc_curves[c_name] = {
+                        "fpr": [round(float(val), 6) for val in fpr],
+                        "tpr": [round(float(val), 6) for val in tpr],
+                        "auc": class_auc,
+                    }
+                else:
+                    roc_curves[c_name] = {
+                        "fpr": [0.0, 1.0],
+                        "tpr": [0.0, 1.0],
+                        "auc": 0.5,
+                    }
+    except Exception:
+        roc_auc = 0.0
+        roc_curves = {}
 
     return {
         "accuracy":              round(float(accuracy_score(y_test, y_pred)), 6),
@@ -266,7 +322,9 @@ def evaluate_model(
             zero_division=0,
         ),
         "n_test_samples":        int(len(y_test)),
-        "n_classes":             int(len(np.unique(y_test))),
+        "n_classes":             int(len(y_test_unique)),
+        "roc_auc":               roc_auc,
+        "roc_curves":            roc_curves,
     }
 
 
@@ -452,6 +510,7 @@ def cross_validate_model(
     f1_macros = []
     precisions = []
     recalls = []
+    roc_aucs = []
 
     # Initialize accumulated confusion matrix (shape: n_classes x n_classes)
     n_classes = len(class_names)
@@ -476,6 +535,7 @@ def cross_validate_model(
         f1_macros.append(fold_metrics["f1_macro"])
         precisions.append(fold_metrics["precision_macro"])
         recalls.append(fold_metrics["recall_macro"])
+        roc_aucs.append(fold_metrics["roc_auc"])
 
         fold_cm = np.array(fold_metrics["confusion_matrix"])
         accum_cm += fold_cm
@@ -487,6 +547,8 @@ def cross_validate_model(
             "recall_macro":     fold_metrics["recall_macro"],
             "f1_macro":         fold_metrics["f1_macro"],
             "f1_weighted":      fold_metrics["f1_weighted"],
+            "roc_auc":          fold_metrics["roc_auc"],
+            "roc_curves":       fold_metrics["roc_curves"],
             "confusion_matrix": fold_metrics["confusion_matrix"],
             "train_samples":    int(len(X_train)),
             "test_samples":     int(len(X_test)),
@@ -502,6 +564,8 @@ def cross_validate_model(
         "mean_precision_macro":         round(float(np.mean(precisions)), 6),
         "mean_recall_macro":            round(float(np.mean(recalls)), 6),
         "mean_f1_macro":                round(float(np.mean(f1_macros)), 6),
+        "mean_roc_auc":                 round(float(np.mean(roc_aucs)), 6),
+        "std_roc_auc":                  round(float(np.std(roc_aucs)), 6),
         "folds":                        fold_metrics_list,
         "accumulated_confusion_matrix": accum_cm.tolist(),
         "n_samples":                    int(len(X)),

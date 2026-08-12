@@ -107,6 +107,7 @@ def test_evaluate_model_required_keys():
         "accuracy", "precision_macro", "recall_macro",
         "f1_macro", "f1_weighted", "confusion_matrix",
         "classification_report", "n_test_samples", "n_classes",
+        "roc_auc", "roc_curves",
     ]
     X_train, X_test, y_train, y_test = _split()
     pipeline = train_model(build_svm(), X_train, y_train)
@@ -217,9 +218,16 @@ def test_cross_validate_classifiers_end_to_end(model):
     assert cv_results["model_name"] == model
     assert cv_results["n_splits"] == 5
     assert 0.0 <= cv_results["mean_accuracy"] <= 1.0
+    assert 0.0 <= cv_results["mean_roc_auc"] <= 1.0
+    assert "std_roc_auc" in cv_results
     assert len(cv_results["folds"]) == 5
     assert cv_results["n_samples"] == N_SAMPLES
     
+    # Check fold-level keys
+    first_fold = cv_results["folds"][0]
+    assert "roc_auc" in first_fold
+    assert "roc_curves" in first_fold
+
     # Check shape of accumulated confusion matrix
     cm = cv_results["accumulated_confusion_matrix"]
     assert len(cm) == cv_results["n_classes"]
